@@ -1,60 +1,50 @@
-# Multi-stage build for development environment
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04 as dev
+FROM ubuntu:22.04
 
 # Add metadata
 LABEL maintainer="oscar.william.chen@gmail.com"
 LABEL version="1.0"
-LABEL description="Development environment with CUDA support"
+LABEL description="CPU-only Inference Server"
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV GOPATH="/go"
+ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
 
-# Install system dependencies
+# Configure apt
+RUN echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom && \
+    echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99custom && \
+    echo "Acquire::BrokenProxy    true;" >> /etc/apt/apt.conf.d/99custom
+
+# Install all required packages
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
     wget \
-    golang \
+    git \
+    build-essential \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m pip install --upgrade pip==24.2
 
-# Install Go and development tools in a single layer
-RUN wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz \
-    && rm -rf /usr/local/go \
-    && tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz \
-    && rm go1.22.0.linux-amd64.tar.gz 
+# Install specific Go version (1.23.6)
+RUN wget -O go.tgz https://go.dev/dl/go1.23.6.linux-amd64.tar.gz && \
+    rm -rf /usr/local/go && \
+    tar -C /usr/local -xzf go.tgz && \
+    rm go.tgz
 
-# Set up environment variables
-ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPATH="/go"
-ENV PATH="${GOPATH}/bin:${PATH}"
+WORKDIR /app
 
-# Install common development tools
-RUN go install github.com/go-delve/delve/cmd/dlv@latest
-RUN go install golang.org/x/tools/gopls@latest
+# Copy only necessary files
+COPY go.mod go.sum ./
+COPY server ./server/
 
-# Create user and set up directories
-RUN useradd -m developer && \
-    mkdir -p /workspace /go && \
-    chown -R developer:developer /workspace /go
+# Download dependencies and build
+RUN go mod download
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server-binary ./server/main.go && \
+    chmod +x /app/server-binary
 
-# Set up working directory
-WORKDIR /workspace
+# Expose server port
+EXPOSE 8080
 
-# Add GPU check script
-COPY scripts/gpu_check.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/gpu_check.sh
-
-# Health check for GPU availability
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD nvidia-smi || exit 1
-
-# Switch to non-root user
-USER developer
-
-# Default command
-CMD ["/bin/bash"]
+# Run the server using the full path
+CMD ["/app/server-binary"]

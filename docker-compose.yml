@@ -1,29 +1,12 @@
-version: '3.8'
-
 services:
-  dev:
+  server:
+    image: gpu-ai-inference-server:latest
     build:
       context: .
-      dockerfile: docker/Dockerfile.dev
+      dockerfile: docker/Dockerfile
     volumes:
       - .:/workspace
-      - go-cache:/go
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     ports:
-      - "8080:8080"  # API server port
-      - "2345:2345"  # Delve debugger port
-    environment:
-      - CUDA_VISIBLE_DEVICES=all
-      - NVIDIA_VISIBLE_DEVICES=all
-    command: /bin/bash
-    stdin_open: true
-    tty: true
-
-volumes:
-  go-cache:
+      - "8080:8080"
+    restart: unless-stopped
+    platform: linux/amd64
