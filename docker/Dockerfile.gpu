@@ -1,3 +1,4 @@
+#TODO: Reformat this base on Dockerfile but for GPUs before deploy to GPU cloud
 FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 # Add metadata

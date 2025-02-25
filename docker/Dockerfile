@@ -1,50 +1,57 @@
-FROM ubuntu:22.04
+# syntax=docker/dockerfile:1.4
+# Enable BuildKit features
 
-# Add metadata
+# Build stage
+FROM golang:1.23.6-alpine AS builder
+
+# Add metadata for build stage
+LABEL description="CPU-only Inference Server - Build Stage"
+
+WORKDIR /app
+
+# Add build dependencies
+RUN apk add --no-cache curl
+
+# Create a persistent module cache
+ENV GOMODCACHE=/go/pkg/mod
+
+# Copy go.mod and go.sum files first for better layer caching
+COPY go.mod go.sum* ./
+
+# Download dependencies (will be cached unless go.mod/go.sum changes)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code
+COPY . .
+
+# Build with optimized flags
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /go/bin/server ./server/main.go
+
+# Final stage - use a minimal Alpine image
+FROM alpine:3.18
+
+# Add metadata for final image
 LABEL maintainer="oscar.william.chen@gmail.com"
 LABEL version="1.0"
 LABEL description="CPU-only Inference Server"
 
-# Set environment variables
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
-ENV GOPATH="/go"
-ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
+# Add runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata curl
 
-# Configure apt
-RUN echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom && \
-    echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99custom && \
-    echo "Acquire::BrokenProxy    true;" >> /etc/apt/apt.conf.d/99custom
+# Create a non-root user to run the application
+RUN adduser -D -u 10001 appuser
+USER 10001
 
-# Install all required packages
-RUN apt-get update && apt-get install -y \
-    wget \
-    git \
-    build-essential \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3 -m pip install --upgrade pip==24.2
+# Copy only the compiled binary from the builder stage
+COPY --from=builder /go/bin/server /go/bin/server
 
-# Install specific Go version (1.23.6)
-RUN wget -O go.tgz https://go.dev/dl/go1.23.6.linux-amd64.tar.gz && \
-    rm -rf /usr/local/go && \
-    tar -C /usr/local -xzf go.tgz && \
-    rm go.tgz
-
-WORKDIR /app
-
-# Copy only necessary files
-COPY go.mod go.sum ./
-COPY server ./server/
-
-# Download dependencies and build
-RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server-binary ./server/main.go && \
-    chmod +x /app/server-binary
-
-# Expose server port
 EXPOSE 8080
 
-# Run the server using the full path
-CMD ["/app/server-binary"]
+# Keep the exact same CMD as before
+CMD ["/go/bin/server"]
