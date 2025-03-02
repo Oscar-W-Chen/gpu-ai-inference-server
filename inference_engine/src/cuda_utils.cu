@@ -73,7 +73,7 @@ __host__ bool VectorAdd(const std::vector<float>& a, const std::vector<float>& b
         if (d_a) cudaFree(d_a);
         if (d_b) cudaFree(d_b);
         if (d_result) cudaFree(d_result);
-    }
+    };
 
     // Allocate memory on GPU for first input vector
     cudaError_t error = cudaMalloc(&d_a, size * sizeof(float));
