@@ -1,6 +1,6 @@
 services:
   server:
-    image: gpu-ai-inference-server:latest
+    image: cpu-ai-inference-server:latest
     build:
       context: .
       dockerfile: docker/Dockerfile

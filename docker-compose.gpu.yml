@@ -1,20 +1,18 @@
+version: '3.8'
+
 services:
-  server:
+  gpu-build:
+    image: gpu-ai-inference-server:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.gpu
     volumes:
       - .:/workspace
-    ports:
-      - "8080:8080"
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      - build-volume:/workspace/build
+    runtime: nvidia  # Required for GPU access
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      
+    command: /bin/bash -c "scripts/build_inference_engine.sh --run-tests"
+
+volumes:
+  build-volume:  # Persistent volume for build artifacts
