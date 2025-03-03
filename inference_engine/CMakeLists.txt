@@ -4,6 +4,7 @@ project(inference_engine LANGUAGES CXX CUDA)
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75)  # Target older architectures
 
 # Find CUDA
 find_package(CUDA REQUIRED)
