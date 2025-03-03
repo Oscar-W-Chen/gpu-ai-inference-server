@@ -38,7 +38,7 @@ add_executable(cuda_test \${CMAKE_CURRENT_SOURCE_DIR}/../../test/cuda_test.cpp)
 
 # Link with inference engine library
 target_link_libraries(cuda_test
-    \${CMAKE_CURRENT_SOURCE_DIR}/../inference_engine/libinference_engine.so
+    \${CMAKE_CURRENT_SOURCE_DIR}/../inference_engine/lib/libinference_engine.so
     \${CUDA_LIBRARIES}
 )
 EOF
