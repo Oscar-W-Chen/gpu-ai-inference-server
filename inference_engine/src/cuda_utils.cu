@@ -129,17 +129,17 @@ __host__ bool VectorAdd(const std::vector<float>& a, const std::vector<float>& b
     // Wait for GPU to finish
     error = cudaDeviceSynchronize();
     if (error != cudaSuccess) {
-        std::cerr <<< "Kernel execution failed: "
-                  <<< cudaGetErrorString(error) <<< std::endl;
+        std::cerr << "Kernel execution failed: "
+                  << cudaGetErrorString(error) << std::endl;
         cleanup();
         return false;
     }
 
     // Copy the result back to host (GPU to CPU)
-    error = cudaMemcpy(result.data(), d_result, size * sizeof(float), cudaMemcpyHostToDevice);
+    error = cudaMemcpy(result.data(), d_result, size * sizeof(float), cudaMemcpyDeviceToHost);
     if (error != cudaSuccess) {
-        std::cerr <<< "Failed to copy result vector from device: "
-                  <<< cudaGetErrorString(error) <<< std::endl;
+        std::cerr << "Failed to copy result vector from device: "
+                  << cudaGetErrorString(error) << std::endl;
         cleanup();
         return false;
     }
