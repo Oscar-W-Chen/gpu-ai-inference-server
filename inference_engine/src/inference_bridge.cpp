@@ -1,0 +1,735 @@
+// Bridge implementation between C and C++ for the inference server
+#include "inference_bridge.h"
+#include "model.h"
+#include "cuda_utils.h"
+#include <string>
+#include <vector>
+#include <memory>
+#include <unordered_map>
+#include <iostream>
+#include <cstring>
+
+// Helper struct to track allocated objects for cleanup
+struct ResourceManager {
+    static std::unordered_map<void*, std::unique_ptr<void>> resources;
+    
+    template<typename T>
+    static T* track(std::unique_ptr<T> ptr) {
+        T* raw_ptr = ptr.get();
+        resources[raw_ptr] = std::move(ptr);
+        return raw_ptr;
+    }
+    
+    static void release(void* ptr) {
+        if (resources.count(ptr) > 0) {
+            resources.erase(ptr);
+        }
+    }
+};
+
+std::unordered_map<void*, std::unique_ptr<void>> ResourceManager::resources;
+
+// Bridge class for InferenceManager
+struct InferenceManager_t {
+    // In a real implementation, this would handle model repository
+    std::string model_repository_path;
+    std::unordered_map<std::string, std::unique_ptr<inference::Model>> models;
+};
+
+// Bridge class for Model
+struct Model_t {
+    std::unique_ptr<inference::Model> model;
+    
+    Model_t(std::unique_ptr<inference::Model> m) : model(std::move(m)) {}
+};
+
+// Bridge class for Tensor
+struct Tensor_t {
+    std::unique_ptr<inference::Tensor> tensor;
+    
+    Tensor_t(std::unique_ptr<inference::Tensor> t) : tensor(std::move(t)) {}
+};
+
+// Helper function to allocate C string copy
+char* strdup_helper(const std::string& str) {
+    char* result = strdup(str.c_str());
+    return result;
+}
+
+// Helper function to convert between C and C++ enums
+inference::ModelType convert_model_type(ModelType type) {
+    switch (type) {
+        case MODEL_TENSORFLOW: return inference::ModelType::TENSORFLOW;
+        case MODEL_TENSORRT: return inference::ModelType::TENSORRT;
+        case MODEL_ONNX: return inference::ModelType::ONNX;
+        case MODEL_PYTORCH: return inference::ModelType::PYTORCH;
+        case MODEL_CUSTOM: return inference::ModelType::CUSTOM;
+        default: return inference::ModelType::UNKNOWN;
+    }
+}
+
+inference::DeviceType convert_device_type(DeviceType device) {
+    switch (device) {
+        case DEVICE_GPU: return inference::DeviceType::GPU;
+        case DEVICE_CPU: 
+        default: return inference::DeviceType::CPU;
+    }
+}
+
+inference::DataType convert_data_type(DataType dtype) {
+    switch (dtype) {
+        case DATATYPE_FLOAT32: return inference::DataType::FLOAT32;
+        case DATATYPE_INT32: return inference::DataType::INT32;
+        case DATATYPE_INT64: return inference::DataType::INT64;
+        case DATATYPE_UINT8: return inference::DataType::UINT8;
+        case DATATYPE_INT8: return inference::DataType::INT8;
+        case DATATYPE_STRING: return inference::DataType::STRING;
+        case DATATYPE_BOOL: return inference::DataType::BOOL;
+        case DATATYPE_FP16: return inference::DataType::FP16;
+        default: return inference::DataType::UNKNOWN;
+    }
+}
+
+// Convert C++ ModelType to C ModelType
+ModelType convert_to_c_model_type(inference::ModelType type) {
+    switch (type) {
+        case inference::ModelType::TENSORFLOW: return MODEL_TENSORFLOW;
+        case inference::ModelType::TENSORRT: return MODEL_TENSORRT;
+        case inference::ModelType::ONNX: return MODEL_ONNX;
+        case inference::ModelType::PYTORCH: return MODEL_PYTORCH;
+        case inference::ModelType::CUSTOM: return MODEL_CUSTOM;
+        default: return MODEL_UNKNOWN;
+    }
+}
+
+// Convert C++ DataType to C DataType
+DataType convert_to_c_data_type(inference::DataType dtype) {
+    switch (dtype) {
+        case inference::DataType::FLOAT32: return DATATYPE_FLOAT32;
+        case inference::DataType::INT32: return DATATYPE_INT32;
+        case inference::DataType::INT64: return DATATYPE_INT64;
+        case inference::DataType::UINT8: return DATATYPE_UINT8;
+        case inference::DataType::INT8: return DATATYPE_INT8;
+        case inference::DataType::STRING: return DATATYPE_STRING;
+        case inference::DataType::BOOL: return DATATYPE_BOOL;
+        case inference::DataType::FP16: return DATATYPE_FP16;
+        default: return DATATYPE_UNKNOWN;
+    }
+}
+
+// CUDA utility functions
+extern "C" {
+    bool IsCudaAvailable() {
+        return inference::cuda::IsCudaAvailable();
+    }
+    
+    int GetDeviceCount() {
+        return inference::cuda::GetDeviceCount();
+    }
+    
+    const char* GetDeviceInfo(int device_id) {
+        std::string info = inference::cuda::GetDeviceInfo(device_id);
+        return strdup_helper(info);
+    }
+
+    // Inference Manager Functions
+    InferenceManagerHandle InferenceInitialize(const char* model_repository_path) {
+        try {
+            auto manager = std::make_unique<InferenceManager_t>();
+            manager->model_repository_path = model_repository_path ? model_repository_path : "";
+            // In a real implementation, we would scan the repository directory
+            // for models and initialize any necessary resources
+            return ResourceManager::track(std::move(manager));
+        } catch (const std::exception& e) {
+            std::cerr << "Exception in InferenceInitialize: " << e.what() << std::endl;
+            return nullptr;
+        }
+    }
+    
+    void InferenceShutdown(InferenceManagerHandle handle) {
+        if (handle) {
+            ResourceManager::release(handle);
+        }
+    }
+    
+    bool InferenceLoadModel(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error) {
+        if (!handle || !model_name) {
+            if (error) *error = strdup_helper("Invalid handle or model name");
+            return false;
+        }
+        
+        try {
+            // In a real implementation, we would load the model from the repository
+            // For now, we'll just create a placeholder
+            std::string model_path = handle->model_repository_path + "/" + model_name;
+            
+            // Check if model is already loaded
+            if (handle->models.find(model_name) != handle->models.end()) {
+                if (error) *error = strdup_helper("Model already loaded");
+                return false;
+            }
+            
+            // In a real implementation, we would detect the model type
+            // and load the model with appropriate configuration
+            inference::ModelConfig config;
+            config.name = model_name;
+            config.version = version ? version : "1";
+            
+            // This is just a placeholder - in a real implementation we would load the actual model
+            // handle->models[model_name] = std::make_unique<inference::Model>(
+            //     model_path, inference::ModelType::UNKNOWN, config);
+            
+            return true;
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool InferenceUnloadModel(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error) {
+        if (!handle || !model_name) {
+            if (error) *error = strdup_helper("Invalid handle or model name");
+            return false;
+        }
+        
+        try {
+            // Find the model
+            auto it = handle->models.find(model_name);
+            if (it == handle->models.end()) {
+                if (error) *error = strdup_helper("Model not found");
+                return false;
+            }
+            
+            // Unload and remove the model
+            handle->models.erase(it);
+            return true;
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool InferenceIsModelLoaded(InferenceManagerHandle handle, const char* model_name, const char* version) {
+        if (!handle || !model_name) {
+            return false;
+        }
+        
+        try {
+            // Find the model
+            auto it = handle->models.find(model_name);
+            return it != handle->models.end();
+        } catch (...) {
+            return false;
+        }
+    }
+    
+    char** InferenceListModels(InferenceManagerHandle handle, int* num_models) {
+        if (!handle || !num_models) {
+            return nullptr;
+        }
+        
+        try {
+            *num_models = static_cast<int>(handle->models.size());
+            if (*num_models == 0) {
+                return nullptr;
+            }
+            
+            char** models = new char*[*num_models];
+            int i = 0;
+            for (const auto& model : handle->models) {
+                models[i++] = strdup_helper(model.first);
+            }
+            return models;
+        } catch (...) {
+            *num_models = 0;
+            return nullptr;
+        }
+    }
+    
+    void InferenceFreeModelList(char** models, int num_models) {
+        if (models) {
+            for (int i = 0; i < num_models; i++) {
+                free(models[i]);
+            }
+            delete[] models;
+        }
+    }
+    
+    // Model Functions
+    ModelHandle ModelCreate(const char* model_path, ModelType type, const ModelConfig* config, DeviceType device, int device_id, ErrorMessage* error) {
+        if (!model_path || !config) {
+            if (error) *error = strdup_helper("Invalid model path or configuration");
+            return nullptr;
+        }
+        
+        try {
+            // Convert C model config to C++ model config
+            inference::ModelConfig cpp_config;
+            cpp_config.name = config->name ? config->name : "";
+            cpp_config.version = config->version ? config->version : "1";
+            cpp_config.type = convert_model_type(config->type_);
+            cpp_config.max_batch_size = config->max_batch_size;
+            cpp_config.instance_count = config->instance_count;
+            cpp_config.dynamic_batching = config->dynamic_batching;
+            
+            // Copy input names
+            for (int i = 0; i < config->num_inputs; i++) {
+                if (config->input_names && config->input_names[i]) {
+                    cpp_config.input_names.push_back(config->input_names[i]);
+                }
+            }
+            
+            // Copy output names
+            for (int i = 0; i < config->num_outputs; i++) {
+                if (config->output_names && config->output_names[i]) {
+                    cpp_config.output_names.push_back(config->output_names[i]);
+                }
+            }
+            
+            // Create the model
+            auto model = std::make_unique<inference::Model>(
+                model_path, 
+                convert_model_type(type), 
+                cpp_config, 
+                convert_device_type(device),
+                device_id
+            );
+            
+            // Wrap in bridge class
+            auto bridge = std::make_unique<Model_t>(std::move(model));
+            return ResourceManager::track(std::move(bridge));
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return nullptr;
+        }
+    }
+    
+    void ModelDestroy(ModelHandle handle) {
+        if (handle) {
+            ResourceManager::release(handle);
+        }
+    }
+    
+    bool ModelLoad(ModelHandle handle, ErrorMessage* error) {
+        if (!handle) {
+            if (error) *error = strdup_helper("Invalid model handle");
+            return false;
+        }
+        
+        try {
+            bool success = handle->model->Load();
+            if (!success && error) {
+                *error = strdup_helper(handle->model->GetLastError());
+            }
+            return success;
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool ModelUnload(ModelHandle handle, ErrorMessage* error) {
+        if (!handle) {
+            if (error) *error = strdup_helper("Invalid model handle");
+            return false;
+        }
+        
+        try {
+            handle->model->Unload();
+            return true;
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool ModelIsLoaded(ModelHandle handle) {
+        if (!handle) {
+            return false;
+        }
+        
+        try {
+            return handle->model->IsLoaded();
+        } catch (...) {
+            return false;
+        }
+    }
+    
+    bool ModelInfer(ModelHandle handle, const TensorData* inputs, int num_inputs, TensorData* outputs, int num_outputs, ErrorMessage* error) {
+        if (!handle || !inputs || num_inputs <= 0 || !outputs || num_outputs <= 0) {
+            if (error) *error = strdup_helper("Invalid parameters");
+            return false;
+        }
+        
+        try {
+            // Convert C input tensors to C++ tensors
+            std::vector<inference::Tensor> cpp_inputs;
+            for (int i = 0; i < num_inputs; i++) {
+                const TensorData& input = inputs[i];
+                
+                // Convert shape
+                inference::Shape shape;
+                if (input.shape.dims && input.shape.num_dims > 0) {
+                    shape.dims.resize(input.shape.num_dims);
+                    for (int j = 0; j < input.shape.num_dims; j++) {
+                        shape.dims[j] = input.shape.dims[j];
+                    }
+                }
+                
+                // Create tensor
+                inference::Tensor tensor(
+                    input.name ? input.name : "",
+                    convert_data_type(input.data_type),
+                    shape
+                );
+                
+                // Set data - this is simplified for float32 only
+                // In a real implementation, we would handle all supported data types
+                if (input.data_type == DATATYPE_FLOAT32 && input.data && input.data_size > 0) {
+                    size_t num_elements = shape.NumElements();
+                    std::vector<float> data(num_elements);
+                    memcpy(data.data(), input.data, std::min(input.data_size, num_elements * sizeof(float)));
+                    tensor.SetData(data);
+                }
+                
+                cpp_inputs.push_back(std::move(tensor));
+            }
+            
+            // Prepare output tensors
+            std::vector<inference::Tensor> cpp_outputs;
+            for (int i = 0; i < num_outputs; i++) {
+                const TensorData& output = outputs[i];
+                
+                // Convert shape
+                inference::Shape shape;
+                if (output.shape.dims && output.shape.num_dims > 0) {
+                    shape.dims.resize(output.shape.num_dims);
+                    for (int j = 0; j < output.shape.num_dims; j++) {
+                        shape.dims[j] = output.shape.dims[j];
+                    }
+                }
+                
+                // Create tensor
+                inference::Tensor tensor(
+                    output.name ? output.name : "",
+                    convert_data_type(output.data_type),
+                    shape
+                );
+                
+                cpp_outputs.push_back(std::move(tensor));
+            }
+            
+            // Run inference
+            bool result = handle->model->Infer(cpp_inputs, cpp_outputs);
+            
+            // Copy output data back to C tensors
+            for (int i = 0; i < num_outputs && i < cpp_outputs.size(); i++) {
+                const inference::Tensor& cpp_output = cpp_outputs[i];
+                TensorData& output = outputs[i];
+                
+                // Get shape
+                const inference::Shape& cpp_shape = cpp_output.GetShape();
+                output.shape.num_dims = cpp_shape.dims.size();
+                
+                // This assumes the dims array is pre-allocated by the caller
+                if (output.shape.dims && output.shape.num_dims > 0) {
+                    for (int j = 0; j < output.shape.num_dims; j++) {
+                        output.shape.dims[j] = cpp_shape.dims[j];
+                    }
+                }
+                
+                // Copy data - this is simplified for float32 only
+                if (output.data_type == DATATYPE_FLOAT32 && output.data && output.data_size > 0) {
+                    std::vector<float> data;
+                    cpp_output.GetData(data);
+                    size_t bytes_to_copy = std::min(output.data_size, data.size() * sizeof(float));
+                    memcpy(output.data, data.data(), bytes_to_copy);
+                }
+            }
+            
+            if (!result && error) {
+                *error = strdup_helper(handle->model->GetLastError());
+            }
+            
+            return result;
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    ModelMetadata* ModelGetMetadata(ModelHandle handle) {
+        if (!handle) {
+            return nullptr;
+        }
+        
+        try {
+            inference::ModelMetadata cpp_metadata = handle->model->GetMetadata();
+            
+            // Create C metadata struct
+            ModelMetadata* metadata = new ModelMetadata();
+            metadata->name = strdup_helper(cpp_metadata.name);
+            metadata->version = strdup_helper(cpp_metadata.version);
+            metadata->model_type = convert_to_c_model_type(cpp_metadata.type);
+            metadata->description = strdup_helper(cpp_metadata.description);
+            metadata->load_time_ns = cpp_metadata.load_time_ns;
+            
+            // Copy inputs
+            metadata->num_inputs = cpp_metadata.inputs.size();
+            if (metadata->num_inputs > 0) {
+                metadata->inputs = new const char*[metadata->num_inputs];
+                for (int i = 0; i < metadata->num_inputs; i++) {
+                    metadata->inputs[i] = strdup_helper(cpp_metadata.inputs[i]);
+                }
+            } else {
+                metadata->inputs = nullptr;
+            }
+            
+            // Copy outputs
+            metadata->num_outputs = cpp_metadata.outputs.size();
+            if (metadata->num_outputs > 0) {
+                metadata->outputs = new const char*[metadata->num_outputs];
+                for (int i = 0; i < metadata->num_outputs; i++) {
+                    metadata->outputs[i] = strdup_helper(cpp_metadata.outputs[i]);
+                }
+            } else {
+                metadata->outputs = nullptr;
+            }
+            
+            return metadata;
+        } catch (...) {
+            return nullptr;
+        }
+    }
+    
+    void ModelFreeMetadata(ModelMetadata* metadata) {
+        if (metadata) {
+            free((void*)metadata->name);
+            free((void*)metadata->version);
+            free((void*)metadata->description);
+            
+            if (metadata->inputs) {
+                for (int i = 0; i < metadata->num_inputs; i++) {
+                    free((void*)metadata->inputs[i]);
+                }
+                delete[] metadata->inputs;
+            }
+            
+            if (metadata->outputs) {
+                for (int i = 0; i < metadata->num_outputs; i++) {
+                    free((void*)metadata->outputs[i]);
+                }
+                delete[] metadata->outputs;
+            }
+            
+            delete metadata;
+        }
+    }
+    
+    ModelStats* ModelGetStats(ModelHandle handle) {
+        if (!handle) {
+            return nullptr;
+        }
+        
+        try {
+            inference::Model::Stats cpp_stats = handle->model->GetStats();
+            
+            // Create C stats struct
+            ModelStats* stats = new ModelStats();
+            stats->inference_count = cpp_stats.inference_count;
+            stats->total_inference_time_ns = cpp_stats.total_inference_time_ns;
+            stats->last_inference_time_ns = cpp_stats.last_inference_time_ns;
+            stats->memory_usage_bytes = cpp_stats.memory_usage_bytes;
+            
+            return stats;
+        } catch (...) {
+            return nullptr;
+        }
+    }
+    
+    void ModelFreeStats(ModelStats* stats) {
+        if (stats) {
+            delete stats;
+        }
+    }
+    
+    // Tensor Functions
+    TensorHandle TensorCreate(const char* name, DataType data_type, const Shape* shape, ErrorMessage* error) {
+        if (!name || !shape) {
+            if (error) *error = strdup_helper("Invalid tensor parameters");
+            return nullptr;
+        }
+        
+        try {
+            // Convert shape
+            inference::Shape cpp_shape;
+            if (shape->dims && shape->num_dims > 0) {
+                cpp_shape.dims.resize(shape->num_dims);
+                for (int i = 0; i < shape->num_dims; i++) {
+                    cpp_shape.dims[i] = shape->dims[i];
+                }
+            }
+            
+            // Create tensor
+            auto tensor = std::make_unique<inference::Tensor>(
+                name,
+                convert_data_type(data_type),
+                cpp_shape
+            );
+            
+            // Wrap in bridge class
+            auto bridge = std::make_unique<Tensor_t>(std::move(tensor));
+            return ResourceManager::track(std::move(bridge));
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return nullptr;
+        }
+    }
+    
+    void TensorDestroy(TensorHandle handle) {
+        if (handle) {
+            ResourceManager::release(handle);
+        }
+    }
+    
+    bool TensorSetData(TensorHandle handle, const void* data, size_t data_size, ErrorMessage* error) {
+        if (!handle || !data || data_size <= 0) {
+            if (error) *error = strdup_helper("Invalid tensor data");
+            return false;
+        }
+        
+        try {
+            // This is simplified for float32 only
+            // In a real implementation, we would handle all supported data types
+            if (handle->tensor->GetDataType() == inference::DataType::FLOAT32) {
+                size_t num_elements = handle->tensor->GetShape().NumElements();
+                std::vector<float> float_data(num_elements);
+                memcpy(float_data.data(), data, std::min(data_size, num_elements * sizeof(float)));
+                return handle->tensor->SetData(float_data);
+            } else {
+                if (error) *error = strdup_helper("Unsupported data type");
+                return false;
+            }
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool TensorGetData(TensorHandle handle, void* data, size_t data_size, ErrorMessage* error) {
+        if (!handle || !data || data_size <= 0) {
+            if (error) *error = strdup_helper("Invalid tensor data buffer");
+            return false;
+        }
+        
+        try {
+            // This is simplified for float32 only
+            if (handle->tensor->GetDataType() == inference::DataType::FLOAT32) {
+                std::vector<float> float_data;
+                bool result = handle->tensor->GetData(float_data);
+                if (result) {
+                    size_t bytes_to_copy = std::min(data_size, float_data.size() * sizeof(float));
+                    memcpy(data, float_data.data(), bytes_to_copy);
+                }
+                return result;
+            } else {
+                if (error) *error = strdup_helper("Unsupported data type");
+                return false;
+            }
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    Shape* TensorGetShape(TensorHandle handle) {
+        if (!handle) {
+            return nullptr;
+        }
+        
+        try {
+            const inference::Shape& cpp_shape = handle->tensor->GetShape();
+            
+            // Create C shape
+            Shape* shape = new Shape();
+            shape->num_dims = cpp_shape.dims.size();
+            
+            if (shape->num_dims > 0) {
+                shape->dims = new int64_t[shape->num_dims];
+                for (int i = 0; i < shape->num_dims; i++) {
+                    shape->dims[i] = cpp_shape.dims[i];
+                }
+            } else {
+                shape->dims = nullptr;
+            }
+            
+            return shape;
+        } catch (...) {
+            return nullptr;
+        }
+    }
+    
+    void TensorFreeShape(Shape* shape) {
+        if (shape) {
+            delete[] shape->dims;
+            delete shape;
+        }
+    }
+    
+    DataType TensorGetDataType(TensorHandle handle) {
+        if (!handle) {
+            return DATATYPE_UNKNOWN;
+        }
+        
+        try {
+            return convert_to_c_data_type(handle->tensor->GetDataType());
+        } catch (...) {
+            return DATATYPE_UNKNOWN;
+        }
+    }
+    
+    const char* TensorGetName(TensorHandle handle) {
+        if (!handle) {
+            return nullptr;
+        }
+        
+        try {
+            return strdup_helper(handle->tensor->GetName());
+        } catch (...) {
+            return nullptr;
+        }
+    }
+    
+    bool TensorToGPU(TensorHandle handle, int device_id, ErrorMessage* error) {
+        if (!handle) {
+            if (error) *error = strdup_helper("Invalid tensor handle");
+            return false;
+        }
+        
+        try {
+            return handle->tensor->toGPU(device_id);
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    bool TensorToCPU(TensorHandle handle, ErrorMessage* error) {
+        if (!handle) {
+            if (error) *error = strdup_helper("Invalid tensor handle");
+            return false;
+        }
+        
+        try {
+            return handle->tensor->toCPU();
+        } catch (const std::exception& e) {
+            if (error) *error = strdup_helper(e.what());
+            return false;
+        }
+    }
+    
+    // Utility Functions
+    void FreeErrorMessage(ErrorMessage error) {
+        free(error);
+    }
+}
