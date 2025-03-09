@@ -66,11 +66,11 @@ def setup_environment():
     go_version, rc = run_cmd("go version", show_output=False)
     if rc != 0:
         print("Installing Go...")
-        run_cmd("curl -OL https://golang.org/dl/go1.20.5.linux-amd64.tar.gz")
-        run_cmd("tar -C /usr/local -xzf go1.20.5.linux-amd64.tar.gz")
-        run_cmd("export PATH=$PATH:/usr/local/go/bin")
-        run_cmd("export GOPATH=/root/go")
-        run_cmd("export PATH=$PATH:$GOPATH/bin")
+        os.system("wget https://dl.google.com/go/go1.23.6.linux-amd64.tar.gz")
+        run_cmd("tar -C /usr/local -xzf go1.23.6.linux-amd64.tar.gz")
+        run_cmd("rm go1.23.6.linux-amd64.tar.gz")
+        os.environ['PATH'] += ':/usr/local/go/bin'
+        
         
         # Verify Go installation
         go_version, rc = run_cmd("go version")
@@ -112,8 +112,20 @@ def build_go_server():
     """Build the Go server"""
     print("\n=== Building Go server ===")
     
-    # Set Go environment variable to ensure the library can be found
-    os.environ["CGO_LDFLAGS"] = "-L$(pwd)/build/inference_engine/lib -linference_engine"
+    # Set Go environment variables to ensure the library can be found
+    current_dir = os.getcwd()
+    lib_path = f"{current_dir}/build/inference_engine/lib"
+    
+    os.environ["CGO_ENABLED"] = "1"
+    os.environ["CGO_LDFLAGS"] = f"-L{lib_path} -linference_engine"
+    
+    print(f"Using library path: {lib_path}")
+    print(f"CGO_LDFLAGS set to: {os.environ['CGO_LDFLAGS']}")
+    
+    # Verify the library exists
+    if not os.path.exists(f"{lib_path}/libinference_engine.so"):
+        print(f"Warning: Cannot find {lib_path}/libinference_engine.so")
+        run_cmd(f"ls -la {lib_path}")
     
     # Build the server
     output, rc = run_cmd("go build -o server ./server/main.go")

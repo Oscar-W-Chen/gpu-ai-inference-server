@@ -16,9 +16,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Source files
 set(SOURCES
     src/cuda_utils.cu
-    # Add other source files as your project grows
-    #src/inference_manager.cpp
-    #src/model.cpp
+    src/inference_manager.cpp
+    src/model.cpp
+    src/inference_bridge.cpp
 )
 
 # Create shared library
