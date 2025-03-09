@@ -5,38 +5,45 @@
 #include <algorithm>
 #include <fstream>
 #include <chrono>
+#include <sstream>
+#include <iomanip>
 
 namespace inference {
+
+//==============================================================================
+// String Conversion Functions
+//==============================================================================
+
+/**
+ * @brief Convert model state enum to string representation
+ */
+std::string ModelStateToString(ModelState state) {
+    switch (state) {
+        case ModelState::UNAVAILABLE: return "UNAVAILABLE";
+        case ModelState::UNLOADED: return "UNLOADED";
+        case ModelState::LOADING: return "LOADING";
+        case ModelState::LOADED: return "LOADED";
+        case ModelState::UNLOADING: return "UNLOADING";
+        case ModelState::ERROR: return "ERROR";
+        default: return "UNKNOWN";
+    }
+}
 
 //==============================================================================
 // ModelRepository Class Implementation
 //==============================================================================
 /**
  * @brief Manages access to models stored in the filesystem
- * 
- * The ModelRepository handles scanning, versioning, and providing access to
- * model files stored in a repository directory structure similar to NVIDIA Triton.
- * Structure expected:
- *   repository_path/
- *     model_name1/
- *       1/          # version directory
- *         config.pbtxt or model files
- *       2/
- *         config.pbtxt or model files
- *     model_name2/
- *       ...
  */
 class ModelRepository {
 public:
     /**
      * @brief Constructor with repository path
-     * @param path Path to model repository
      */
     ModelRepository(const std::string& path) : repository_path_(path) {}
 
     /**
      * @brief Scan the repository for models and versions
-     * @return true if scan was successful, false otherwise
      */
     bool ScanRepository() {
         try {
@@ -70,7 +77,12 @@ public:
                     // Sort versions in descending order (newest first)
                     std::sort(versions.begin(), versions.end(), 
                         [](const std::string& a, const std::string& b) {
-                            return std::stoi(a) > std::stoi(b);
+                            try {
+                                return std::stoi(a) > std::stoi(b);
+                            } catch (const std::exception&) {
+                                // Handle non-numeric versions
+                                return a > b;
+                            }
                         });
 
                     // Only add models that have at least one valid version
@@ -88,8 +100,25 @@ public:
     }
 
     /**
+     * @brief Check if a model exists in the repository
+     */
+    bool ModelExists(const std::string& model_name, const std::string& version = "") const {
+        auto it = model_versions_.find(model_name);
+        if (it == model_versions_.end() || it->second.empty()) {
+            return false;
+        }
+
+        if (version.empty()) {
+            // Any version is fine
+            return true;
+        }
+
+        // Check specific version
+        return std::find(it->second.begin(), it->second.end(), version) != it->second.end();
+    }
+
+    /**
      * @brief Get list of all available model names
-     * @return Vector of model names
      */
     std::vector<std::string> GetAvailableModels() const {
         std::vector<std::string> models;
@@ -101,9 +130,6 @@ public:
 
     /**
      * @brief Get the filesystem path to a model
-     * @param model_name Model name
-     * @param version Model version (empty for latest)
-     * @return Full path to the model directory, or empty string if not found
      */
     std::string GetModelPath(const std::string& model_name, const std::string& version = "") const {
         // Check if model exists in our registry
@@ -131,12 +157,6 @@ public:
 
     /**
      * @brief Get model configuration
-     * @param model_name Model name
-     * @param version Model version (empty for latest)
-     * @return Model configuration object
-     * 
-     * In a real implementation, this would parse a config file.
-     * This simplified version just creates a basic configuration.
      */
     ModelConfig GetModelConfig(const std::string& model_name, const std::string& version = "") const {
         ModelConfig config;
@@ -164,8 +184,6 @@ public:
 
     /**
      * @brief Get the latest version for a model
-     * @param model_name Model name
-     * @return Latest version number or empty string if model not found
      */
     std::string GetLatestVersion(const std::string& model_name) const {
         auto it = model_versions_.find(model_name);
@@ -174,6 +192,17 @@ public:
         }
         // First version in the list is the latest (due to sorting in ScanRepository)
         return it->second.front();
+    }
+
+    /**
+     * @brief Get all available versions for a model
+     */
+    std::vector<std::string> GetModelVersions(const std::string& model_name) const {
+        auto it = model_versions_.find(model_name);
+        if (it == model_versions_.end()) {
+            return {};
+        }
+        return it->second;
     }
 
 private:
@@ -185,8 +214,6 @@ private:
 
     /**
      * @brief Check if a directory contains valid model files
-     * @param model_path Path to check
-     * @return true if valid model files exist
      */
     bool HasModelConfig(const std::filesystem::path& model_path) const {
         // Check for various types of model files or configuration
@@ -198,8 +225,6 @@ private:
 
     /**
      * @brief Attempt to detect model type from files in directory
-     * @param model_path Path to model directory
-     * @return Detected model type or UNKNOWN
      */
     ModelType DetectModelType(const std::filesystem::path& model_path) const {
         // Identify model type based on file extensions
@@ -217,39 +242,24 @@ private:
 };
 
 //==============================================================================
-// Helper Function for Model State
-//==============================================================================
-
-/**
- * @brief Convert model state enum to string representation
- * @param state Model state
- * @return String representation of state
- */
-std::string StateToString(ModelState state) {
-    switch (state) {
-        case ModelState::UNLOADED: return "UNLOADED";
-        case ModelState::LOADING: return "LOADING";
-        case ModelState::LOADED: return "LOADED";
-        case ModelState::UNLOADING: return "UNLOADING";
-        case ModelState::ERROR: return "ERROR";
-        default: return "UNKNOWN";
-    }
-}
-
-//==============================================================================
 // InferenceManager Implementation
 //==============================================================================
 
 /**
  * @brief Constructor
- * @param model_repository_path Path to model repository
  */
-InferenceManager::InferenceManager(const std::string& model_repository_path)
-    : model_repository_path_(model_repository_path) {
+InferenceManager::InferenceManager(const std::string& model_repository_path, int num_worker_threads)
+    : model_repository_path_(model_repository_path),
+      shutdown_flag_(false) {
+    
+    // Create worker threads for async operations
+    for (int i = 0; i < num_worker_threads; i++) {
+        worker_threads_.emplace_back(&InferenceManager::WorkerThreadFunc, this);
+    }
 }
 
 /**
- * @brief Destructor, ensures all resources are cleaned up
+ * @brief Destructor
  */
 InferenceManager::~InferenceManager() {
     Shutdown();
@@ -257,10 +267,9 @@ InferenceManager::~InferenceManager() {
 
 /**
  * @brief Initialize the inference manager and repository
- * @return true if initialization successful
  */
 bool InferenceManager::Initialize() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(models_mutex_);
     
     try {
         // Create model repository manager
@@ -281,301 +290,97 @@ bool InferenceManager::Initialize() {
 
 /**
  * @brief Shutdown and release all resources
- * 
- * Unloads all models and frees resources
  */
 void InferenceManager::Shutdown() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Signal worker threads to stop
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        shutdown_flag_ = true;
+    }
+    
+    // Wake up all worker threads
+    queue_condition_.notify_all();
+    
+    // Wait for all worker threads to finish
+    for (auto& thread : worker_threads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
     
     // Unload all models
-    models_.clear();
-    
-    // Clear repository
-    repository_.reset();
+    {
+        std::lock_guard<std::mutex> lock(models_mutex_);
+        models_.clear();
+        repository_.reset();
+    }
 }
 
 /**
- * @brief Load a model into memory
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @return true if model loaded successfully
- * 
- * Loads a model from the repository into memory.
- * Thread-safe: uses mutex to prevent concurrent modifications.
+ * @brief Worker thread function for async operations
  */
-bool InferenceManager::LoadModel(const std::string& model_name, const std::string& version) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    try {
-        // Check initialization
-        if (!repository_) {
-            SetError("Inference manager not initialized");
-            return false;
-        }
+void InferenceManager::WorkerThreadFunc() {
+    while (true) {
+        AsyncTask task;
         
-        // Check if model is already loaded or in transition
-        std::string model_key = MakeModelKey(model_name, version);
-        auto it = models_.find(model_key);
-        if (it != models_.end()) {
-            // Check current model state to determine action
-            switch (it->second.state) {
-                case ModelState::LOADED:
-                    // Model already loaded - nothing to do
-                    return true;
-                case ModelState::LOADING:
-                    SetError("Model is already being loaded: " + model_key);
-                    return false;
-                case ModelState::UNLOADING:
-                    SetError("Model is currently being unloaded: " + model_key);
-                    return false;
-                case ModelState::ERROR:
-                    // Model was in error state, allow attempt to reload
-                    break;
-                default:
-                    // Model exists but is unloaded, proceed with loading
-                    break;
+        // Wait for a task
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex_);
+            queue_condition_.wait(lock, [this] {
+                return shutdown_flag_ || !task_queue_.empty();
+            });
+            
+            // Check if we should exit
+            if (shutdown_flag_ && task_queue_.empty()) {
+                break;
+            }
+            
+            // Get the next task
+            if (!task_queue_.empty()) {
+                task = task_queue_.front();
+                task_queue_.pop();
+            } else {
+                continue;
             }
         }
         
-        // Get model path and configuration from repository
-        std::string resolved_version = version.empty() ? repository_->GetLatestVersion(model_name) : version;
-        std::string model_path = repository_->GetModelPath(model_name, resolved_version);
+        // Process the task
+        bool success = false;
+        std::string error_msg;
         
-        if (model_path.empty()) {
-            SetError("Model not found: " + model_name + (version.empty() ? "" : ":" + version));
-            return false;
+        try {
+            if (task.type == AsyncTask::TaskType::LOAD) {
+                success = LoadModelInternal(task.model_name, task.version, task.model_key);
+                if (!success) {
+                    std::lock_guard<std::mutex> lock(error_mutex_);
+                    error_msg = last_error_;
+                }
+            } else if (task.type == AsyncTask::TaskType::UNLOAD) {
+                success = UnloadModelInternal(task.model_name, task.version, task.model_key);
+                if (!success) {
+                    std::lock_guard<std::mutex> lock(error_mutex_);
+                    error_msg = last_error_;
+                }
+            }
+        } catch (const std::exception& e) {
+            success = false;
+            error_msg = e.what();
+            SetError(error_msg);
         }
         
-        ModelConfig config = repository_->GetModelConfig(model_name, resolved_version);
-        
-        // Determine device type based on available hardware
-        // Use GPU if available, otherwise fall back to CPU
-        DeviceType device_type = cuda::IsCudaAvailable() ? DeviceType::GPU : DeviceType::CPU;
-        int device_id = 0; // Use first device for now
-        
-        // Create model instance
-        auto model = std::make_shared<Model>(model_path, config.type, config, device_type, device_id);
-        
-        // Update state to loading and track the time
-        ModelInfo model_info;
-        model_info.model = model;
-        model_info.state = ModelState::LOADING;
-        model_info.state_changed_time = std::chrono::system_clock::now();
-        models_[model_key] = model_info;
-        
-        // Perform actual model loading
-        if (!model->Load()) {
-            // Update state to error if loading failed
-            models_[model_key].state = ModelState::ERROR;
-            models_[model_key].error_message = model->GetLastError();
-            models_[model_key].state_changed_time = std::chrono::system_clock::now();
-            
-            SetError("Failed to load model: " + model->GetLastError());
-            return false;
+        // Call the callback if provided
+        if (task.callback) {
+            try {
+                task.callback(success, task.model_key, error_msg);
+            } catch (const std::exception& e) {
+                std::cerr << "Exception in model operation callback: " << e.what() << std::endl;
+            }
         }
-        
-        // Successfully loaded - update state
-        models_[model_key].state = ModelState::LOADED;
-        models_[model_key].state_changed_time = std::chrono::system_clock::now();
-        
-        return true;
-    } catch (const std::exception& e) {
-        SetError(std::string("Load model error: ") + e.what());
-        return false;
     }
-}
-
-/**
- * @brief Unload a model from memory
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @return true if model unloaded successfully
- * 
- * Unloads a model from memory and releases resources.
- * Thread-safe: uses mutex to prevent concurrent modifications.
- */
-bool InferenceManager::UnloadModel(const std::string& model_name, const std::string& version) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    try {
-        // Get model key
-        std::string model_key = MakeModelKey(model_name, version);
-        
-        // Find model
-        auto it = models_.find(model_key);
-        if (it == models_.end()) {
-            SetError("Model not found: " + model_name + (version.empty() ? "" : ":" + version));
-            return false;
-        }
-        
-        // Check model state to determine action
-        switch (it->second.state) {
-            case ModelState::UNLOADED:
-                // Already unloaded - nothing to do
-                return true;
-            case ModelState::UNLOADING:
-                SetError("Model is already being unloaded: " + model_key);
-                return false;
-            case ModelState::LOADING:
-                SetError("Model is currently being loaded: " + model_key);
-                return false;
-            default:
-                // Proceed with unloading for other states
-                break;
-        }
-        
-        // Update state to unloading
-        it->second.state = ModelState::UNLOADING;
-        it->second.state_changed_time = std::chrono::system_clock::now();
-        
-        // Explicitly unload the model to release resources
-        if (it->second.model) {
-            it->second.model->Unload();
-        }
-        
-        // Update state to unloaded
-        it->second.state = ModelState::UNLOADED;
-        it->second.state_changed_time = std::chrono::system_clock::now();
-        
-        // Remove the model completely from the map
-        // Alternative: keep entry but set model=nullptr if we want history
-        models_.erase(it);
-        
-        return true;
-    } catch (const std::exception& e) {
-        SetError(std::string("Unload model error: ") + e.what());
-        return false;
-    }
-}
-
-/**
- * @brief Check if a model is loaded and ready for inference
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @return true if model is loaded, false otherwise
- */
-bool InferenceManager::IsModelLoaded(const std::string& model_name, const std::string& version) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    std::string model_key = MakeModelKey(model_name, version);
-    auto it = models_.find(model_key);
-    // Only return true if model exists AND is in LOADED state
-    return (it != models_.end() && it->second.state == ModelState::LOADED);
-}
-
-/**
- * @brief Get the current state of a model
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @return Current state of the model (UNLOADED if not found)
- */
-ModelState InferenceManager::GetModelState(const std::string& model_name, const std::string& version) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    std::string model_key = MakeModelKey(model_name, version);
-    auto it = models_.find(model_key);
-    if (it != models_.end()) {
-        return it->second.state;
-    }
-    return ModelState::UNLOADED;
-}
-
-/**
- * @brief List all available models in the repository
- * @return Vector of model names
- */
-std::vector<std::string> InferenceManager::ListModels() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    if (!repository_) {
-        return {};
-    }
-    
-    return repository_->GetAvailableModels();
-}
-
-/**
- * @brief Get a loaded model by name and version
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @return Shared pointer to model, or nullptr if not found or not loaded
- */
-std::shared_ptr<Model> InferenceManager::GetModel(const std::string& model_name, const std::string& version) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    std::string model_key = MakeModelKey(model_name, version);
-    auto it = models_.find(model_key);
-    // Only return model if it exists AND is in LOADED state
-    if (it == models_.end() || it->second.state != ModelState::LOADED) {
-        return nullptr;
-    }
-    
-    return it->second.model;
-}
-
-/**
- * @brief Execute inference on a loaded model
- * @param model_name Model name
- * @param version Model version (empty for latest)
- * @param inputs Input tensors
- * @param outputs Output tensors to be filled
- * @return true if inference successful
- * 
- * Thread safety: Uses a two-phase approach to allow concurrent inferences
- * while protecting the model map.
- */
-bool InferenceManager::RunInference(const std::string& model_name, 
-                                   const std::string& version,
-                                   const std::vector<Tensor>& inputs, 
-                                   std::vector<Tensor>& outputs) {
-    // Phase 1: Get the model under lock
-    std::shared_ptr<Model> model;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        
-        std::string model_key = MakeModelKey(model_name, version);
-        auto it = models_.find(model_key);
-        if (it == models_.end()) {
-            SetError("Model not found: " + model_name + (version.empty() ? "" : ":" + version));
-            return false;
-        }
-        
-        // Verify model is in LOADED state
-        if (it->second.state != ModelState::LOADED) {
-            SetError("Model not in loaded state: " + model_key + " (current state: " + 
-                     StateToString(it->second.state) + ")");
-            return false;
-        }
-        
-        model = it->second.model;
-    }
-    
-    // Phase 2: Run inference without holding the lock
-    // This allows multiple inferences to run concurrently
-    bool success = model->Infer(inputs, outputs);
-    if (!success) {
-        SetError(model->GetLastError());
-    }
-    
-    return success;
-}
-
-/**
- * @brief Get the last error message
- * @return Last error message string
- */
-std::string InferenceManager::GetLastError() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return last_error_;
 }
 
 /**
  * @brief Create a unique key for a model+version combination
- * @param name Model name
- * @param version Model version
- * @return Unique key string in format "name:version"
- * 
- * If version is empty, attempts to get the latest version.
  */
 std::string InferenceManager::MakeModelKey(const std::string& name, const std::string& version) const {
     if (version.empty()) {
@@ -592,10 +397,487 @@ std::string InferenceManager::MakeModelKey(const std::string& name, const std::s
 }
 
 /**
+ * @brief Load a model synchronously
+ */
+bool InferenceManager::LoadModel(const std::string& model_name, const std::string& version) {
+    std::string model_key = MakeModelKey(model_name, version);
+    
+    // Check if model exists in repository
+    {
+        std::lock_guard<std::mutex> lock(models_mutex_);
+        if (!repository_->ModelExists(model_name, version.empty() ? repository_->GetLatestVersion(model_name) : version)) {
+            SetError("Model not found in repository: " + model_name + (version.empty() ? "" : ":" + version));
+            return false;
+        }
+    }
+    
+    return LoadModelInternal(model_name, version, model_key);
+}
+
+/**
+ * @brief Load a model asynchronously
+ */
+bool InferenceManager::LoadModelAsync(const std::string& model_name, 
+                                     const std::string& version,
+                                     ModelOperationCallback callback) {
+    std::string model_key = MakeModelKey(model_name, version);
+    
+    // Check if model exists in repository
+    {
+        std::lock_guard<std::mutex> lock(models_mutex_);
+        if (!repository_->ModelExists(model_name, version.empty() ? repository_->GetLatestVersion(model_name) : version)) {
+            SetError("Model not found in repository: " + model_name + (version.empty() ? "" : ":" + version));
+            return false;
+        }
+    }
+    
+    // Create async task
+    AsyncTask task;
+    task.type = AsyncTask::TaskType::LOAD;
+    task.model_key = model_key;
+    task.model_name = model_name;
+    task.version = version;
+    task.callback = callback;
+    
+    // Queue the task
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        task_queue_.push(task);
+    }
+    
+    // Notify a worker thread
+    queue_condition_.notify_one();
+    
+    return true;
+}
+
+/**
+ * @brief Internal implementation of model loading
+ */
+bool InferenceManager::LoadModelInternal(const std::string& model_name, 
+                                        const std::string& version,
+                                        const std::string& model_key) {
+    // Lock the models map
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    try {
+        // Check if model is already loaded or in transition
+        auto it = models_.find(model_key);
+        if (it != models_.end()) {
+            // Check current model state to determine action
+            switch (it->second.state) {
+                case ModelState::LOADED:
+                    // Model already loaded - nothing to do
+                    return true;
+                    
+                case ModelState::LOADING:
+                    // Model is already being loaded - this is not an error for async requests
+                    return true;
+                    
+                case ModelState::UNLOADING:
+                    // Model is currently being unloaded - wait and retry would be better
+                    SetError("Model is currently being unloaded: " + model_key);
+                    return false;
+                    
+                case ModelState::ERROR:
+                    // Model was in error state, allow attempt to reload
+                    // Fall through to loading code
+                    break;
+                    
+                default:
+                    // Proceed with loading for other states
+                    break;
+            }
+        } else {
+            // Model doesn't exist in our map yet, create entry
+            ModelInfo info;
+            info.state = ModelState::UNAVAILABLE;  // Will update after checking repository
+            info.state_changed_time = std::chrono::system_clock::now();
+            models_.emplace(model_key, std::move(info));
+            it = models_.find(model_key);
+        }
+        
+        // Get model path and configuration from repository
+        std::string resolved_version = version.empty() ? repository_->GetLatestVersion(model_name) : version;
+        std::string model_path = repository_->GetModelPath(model_name, resolved_version);
+        
+        if (model_path.empty()) {
+            it->second.state = ModelState::UNAVAILABLE;
+            it->second.error_message = "Model not found in repository";
+            it->second.state_changed_time = std::chrono::system_clock::now();
+            SetError("Model not found: " + model_name + (version.empty() ? "" : ":" + version));
+            return false;
+        }
+        
+        // Update state to loading
+        it->second.state = ModelState::LOADING;
+        it->second.error_message.clear();
+        it->second.state_changed_time = std::chrono::system_clock::now();
+        
+        // Get model configuration
+        ModelConfig config = repository_->GetModelConfig(model_name, resolved_version);
+        
+        // Determine device type based on available hardware
+        DeviceType device_type = cuda::IsCudaAvailable() ? DeviceType::GPU : DeviceType::CPU;
+        int device_id = 0; // Use first device for now
+        
+        // Create model instance
+        auto model = std::make_shared<Model>(model_path, config.type, config, device_type, device_id);
+        it->second.model = model;
+        
+        // Perform actual model loading
+        bool load_success = model->Load();
+        if (!load_success) {
+            // Update state to error if loading failed
+            it->second.state = ModelState::ERROR;
+            it->second.error_message = model->GetLastError();
+            it->second.state_changed_time = std::chrono::system_clock::now();
+            
+            SetError("Failed to load model: " + model->GetLastError());
+            return false;
+        }
+        
+        // Successfully loaded - update state
+        it->second.state = ModelState::LOADED;
+        it->second.error_message.clear();
+        it->second.state_changed_time = std::chrono::system_clock::now();
+        
+        return true;
+    } catch (const std::exception& e) {
+        // Update model state to error
+        auto it = models_.find(model_key);
+        if (it != models_.end()) {
+            it->second.state = ModelState::ERROR;
+            it->second.error_message = e.what();
+            it->second.state_changed_time = std::chrono::system_clock::now();
+        }
+        
+        SetError(std::string("Load model error: ") + e.what());
+        return false;
+    }
+}
+
+/**
+ * @brief Unload a model synchronously
+ */
+bool InferenceManager::UnloadModel(const std::string& model_name, const std::string& version) {
+    std::string model_key = MakeModelKey(model_name, version);
+    return UnloadModelInternal(model_name, version, model_key);
+}
+
+/**
+ * @brief Unload a model asynchronously
+ */
+bool InferenceManager::UnloadModelAsync(const std::string& model_name, 
+                                       const std::string& version,
+                                       ModelOperationCallback callback) {
+    std::string model_key = MakeModelKey(model_name, version);
+    
+    // Create async task
+    AsyncTask task;
+    task.type = AsyncTask::TaskType::UNLOAD;
+    task.model_key = model_key;
+    task.model_name = model_name;
+    task.version = version;
+    task.callback = callback;
+    
+    // Queue the task
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        task_queue_.push(task);
+    }
+    
+    // Notify a worker thread
+    queue_condition_.notify_one();
+    
+    return true;
+}
+
+/**
+ * @brief Internal implementation of model unloading
+ */
+bool InferenceManager::UnloadModelInternal(const std::string& model_name, 
+                                          const std::string& version,
+                                          const std::string& model_key) {
+    // Lock the models map
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    try {
+        // Find model
+        auto it = models_.find(model_key);
+        if (it == models_.end()) {
+            // Model not found - consider this success since the end result is
+            // that the model is not loaded, which is what was requested
+            return true;
+        }
+        
+        // Check model state to determine action
+        switch (it->second.state) {
+            case ModelState::UNLOADED:
+            case ModelState::UNAVAILABLE:
+                // Already unloaded or not available - nothing to do
+                return true;
+                
+            case ModelState::UNLOADING:
+                // Already being unloaded - this is not an error for async requests
+                return true;
+                
+            case ModelState::LOADING:
+                // Being loaded - can't unload yet
+                SetError("Model is currently being loaded: " + model_key);
+                return false;
+                
+            default:
+                // Proceed with unloading for other states
+                break;
+        }
+        
+        // Update state to unloading
+        it->second.state = ModelState::UNLOADING;
+        it->second.error_message.clear();
+        it->second.state_changed_time = std::chrono::system_clock::now();
+        
+        // Explicitly unload the model to release resources
+        if (it->second.model) {
+            it->second.model->Unload();
+            it->second.model.reset(); // Release model resources
+        }
+        
+        // Remove the model entry completely (alternative: keep with UNLOADED state)
+        models_.erase(it);
+        
+        return true;
+    } catch (const std::exception& e) {
+        // If model exists, update its state
+        auto it = models_.find(model_key);
+        if (it != models_.end()) {
+            it->second.state = ModelState::ERROR;
+            it->second.error_message = e.what();
+            it->second.state_changed_time = std::chrono::system_clock::now();
+        }
+        
+        SetError(std::string("Unload model error: ") + e.what());
+        return false;
+    }
+}
+
+/**
+ * @brief Check if a model is loaded and ready for inference
+ */
+bool InferenceManager::IsModelLoaded(const std::string& model_name, const std::string& version) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    std::string model_key = MakeModelKey(model_name, version);
+    auto it = models_.find(model_key);
+    // Only return true if model exists AND is in LOADED state
+    return (it != models_.end() && it->second.state == ModelState::LOADED);
+}
+
+/**
+ * @brief Get the current state of a model
+ */
+ModelState InferenceManager::GetModelState(const std::string& model_name, const std::string& version) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    std::string model_key = MakeModelKey(model_name, version);
+    auto it = models_.find(model_key);
+    if (it != models_.end()) {
+        return it->second.state;
+    }
+    
+    // Check if model exists in repository but isn't loaded
+    if (repository_ && repository_->ModelExists(model_name, version)) {
+        return ModelState::UNLOADED;
+    }
+    
+    return ModelState::UNAVAILABLE;
+}
+
+/**
+ * @brief Get detailed model status including error messages and timestamps
+ */
+std::string InferenceManager::GetModelStatus(const std::string& model_name, const std::string& version) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    std::string model_key = MakeModelKey(model_name, version);
+    std::stringstream json;
+    json << "{\n";
+    
+    // Check if model is in our tracking map
+    auto it = models_.find(model_key);
+    if (it != models_.end()) {
+        const auto& info = it->second;
+        
+        // Convert time_point to ISO string (simplified)
+        auto time_t = std::chrono::system_clock::to_time_t(info.state_changed_time);
+        std::string time_str = std::ctime(&time_t);
+        if (!time_str.empty() && time_str.back() == '\n') {
+            time_str.pop_back(); // Remove trailing newline
+        }
+        
+        // Add basic model info
+        json << "  \"name\": \"" << model_name << "\",\n";
+        json << "  \"version\": \"" << (version.empty() ? repository_->GetLatestVersion(model_name) : version) << "\",\n";
+        json << "  \"state\": \"" << ModelStateToString(info.state) << "\",\n";
+        json << "  \"state_changed_time\": \"" << time_str << "\",\n";
+        json << "  \"error_message\": \"" << EscapeJsonString(info.error_message) << "\"";
+        
+        // Add model-specific details if available
+        if (info.model && info.state == ModelState::LOADED) {
+            json << ",\n  \"type\": " << static_cast<int>(info.model->GetMetadata().type) << ",\n";
+            json << "  \"memory_usage_bytes\": " << info.model->GetStats().memory_usage_bytes << ",\n";
+            json << "  \"inference_count\": " << info.model->GetStats().inference_count;
+        }
+    } else if (repository_ && repository_->ModelExists(model_name, version)) {
+        // Model exists in repository but isn't loaded
+        json << "  \"name\": \"" << model_name << "\",\n";
+        json << "  \"version\": \"" << (version.empty() ? repository_->GetLatestVersion(model_name) : version) << "\",\n";
+        json << "  \"state\": \"UNLOADED\",\n";
+        json << "  \"error_message\": \"\"";
+    } else {
+        // Model doesn't exist
+        json << "  \"name\": \"" << model_name << "\",\n";
+        json << "  \"version\": \"" << version << "\",\n";
+        json << "  \"state\": \"UNAVAILABLE\",\n";
+        json << "  \"error_message\": \"Model not found in repository\"";
+    }
+    
+    json << "\n}";
+    return json.str();
+}
+
+/**
+ * @brief Helper to escape strings for JSON
+ */
+std::string EscapeJsonString(const std::string& input) {
+    std::ostringstream ss;
+    for (auto ch : input) {
+        switch (ch) {
+            case '\\': ss << "\\\\"; break;
+            case '"': ss << "\\\""; break;
+            case '\b': ss << "\\b"; break;
+            case '\f': ss << "\\f"; break;
+            case '\n': ss << "\\n"; break;
+            case '\r': ss << "\\r"; break;
+            case '\t': ss << "\\t"; break;
+            default:
+                if (ch < 32) {
+                    // For control characters, use \uXXXX format
+                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch);
+                } else {
+                    ss << ch;
+                }
+        }
+    }
+    return ss.str();
+}
+
+/**
+ * @brief Helper to escape strings for JSON
+ */
+std::string EscapeJsonString(const std::string& input) {
+    std::ostringstream ss;
+    for (auto ch : input) {
+        switch (ch) {
+            case '\\': ss << "\\\\"; break;
+            case '"': ss << "\\\""; break;
+            case '\b': ss << "\\b"; break;
+            case '\f': ss << "\\f"; break;
+            case '\n': ss << "\\n"; break;
+            case '\r': ss << "\\r"; break;
+            case '\t': ss << "\\t"; break;
+            default:
+                if (ch < 32) {
+                    // For control characters, use \uXXXX format
+                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch);
+                } else {
+                    ss << ch;
+                }
+        }
+    }
+    return ss.str();
+}
+
+/**
+ * @brief List all available models in the repository
+ */
+std::vector<std::string> InferenceManager::ListModels() {
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    if (!repository_) {
+        return {};
+    }
+    
+    return repository_->GetAvailableModels();
+}
+
+/**
+ * @brief Get a loaded model by name and version
+ */
+std::shared_ptr<Model> InferenceManager::GetModel(const std::string& model_name, const std::string& version) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    
+    std::string model_key = MakeModelKey(model_name, version);
+    auto it = models_.find(model_key);
+    // Only return model if it exists AND is in LOADED state
+    if (it == models_.end() || it->second.state != ModelState::LOADED) {
+        return nullptr;
+    }
+    
+    return it->second.model;
+}
+
+/**
+ * @brief Run inference with a loaded model
+ */
+bool InferenceManager::RunInference(const std::string& model_name, 
+                                   const std::string& version,
+                                   const std::vector<Tensor>& inputs, 
+                                   std::vector<Tensor>& outputs) {
+    // Get the model (with lock)
+    std::shared_ptr<Model> model;
+    {
+        std::lock_guard<std::mutex> lock(models_mutex_);
+        
+        std::string model_key = MakeModelKey(model_name, version);
+        auto it = models_.find(model_key);
+        if (it == models_.end()) {
+            SetError("Model not found: " + model_name + (version.empty() ? "" : ":" + version));
+            return false;
+        }
+        
+        // Verify model is in LOADED state
+        if (it->second.state != ModelState::LOADED) {
+            SetError("Model not in loaded state: " + model_key + " (current state: " + 
+                     ModelStateToString(it->second.state) + ")");
+            return false;
+        }
+        
+        model = it->second.model;
+    }
+    
+    // Run inference without holding the lock (allows concurrent inference)
+    bool success = model->Infer(inputs, outputs);
+    if (!success) {
+        SetError(model->GetLastError());
+    }
+    
+    return success;
+}
+
+/**
+ * @brief Get the last error message
+ */
+std::string InferenceManager::GetLastError() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return last_error_;
+}
+
+/**
  * @brief Set error message and log it
- * @param error Error message
  */
 void InferenceManager::SetError(const std::string& error) const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
     last_error_ = error;
     std::cerr << "InferenceManager error: " << error << std::endl;
 }
