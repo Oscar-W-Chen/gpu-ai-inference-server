@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,44 +9,82 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Oscar-W-Chen/gpu-ai-inference-server/inference_engine/binding"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	// Initialize router with default middleware
+	// Initialize logger
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Println("Starting AI Inference Server...")
+
+	// Check CUDA availability directly from binding
+	cudaAvailable := binding.IsCUDAAvailable()
+	deviceCount := binding.GetDeviceCount()
+
+	log.Printf("CUDA Available: %v", cudaAvailable)
+	log.Printf("GPU Device Count: %v", deviceCount)
+
+	// Print device info for each GPU
+	if cudaAvailable && deviceCount > 0 {
+		for i := 0; i < deviceCount; i++ {
+			deviceInfo := binding.GetDeviceInfo(i)
+			log.Printf("Device %d: %s", i, deviceInfo)
+		}
+	}
+
+	// Initialize router
 	router := gin.Default()
 
-	// Basic routes
+	// Define simple routes
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"status": "healthy",
 			"time":   time.Now().Unix(),
 		})
 	})
 
+	// Simple endpoint to get CUDA info
+	router.GET("/cuda", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"cuda_available": cudaAvailable,
+			"device_count":   deviceCount,
+		})
+	})
+
+	// If CUDA is available, add more detailed device info
+	if cudaAvailable {
+		router.GET("/devices", func(c *gin.Context) {
+			devices := make([]string, deviceCount)
+			for i := 0; i < deviceCount; i++ {
+				devices[i] = binding.GetDeviceInfo(i)
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"devices": devices,
+			})
+		})
+	}
+
 	// Initialize server
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: router,
+	serverPort := "8080"
+	if port := os.Getenv("PORT"); port != "" {
+		serverPort = port
 	}
 
 	// Start server in goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v\n", err)
-			os.Exit(1)
+		if err := router.Run(":" + serverPort); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
+
+	log.Printf("Server listening on port %s", serverPort)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v\n", err)
-	}
+	log.Println("Shutting down server...")
+	fmt.Println("Server exited")
 }
