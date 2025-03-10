@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(inference_engine LANGUAGES CXX CUDA)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75)  # Target older architectures
 
@@ -16,8 +16,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 # Source files
 set(SOURCES
     src/cuda_utils.cu
-    src/inference_manager.cpp
-    src/model.cpp
     src/inference_bridge.cpp
 )
 

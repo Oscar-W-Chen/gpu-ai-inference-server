@@ -82,7 +82,7 @@ def setup_environment():
     
     # Install required packages for building
     print("Installing required packages...")
-    run_cmd("apt-get update && apt-get install -y build-essential cmake git pkg-config libcudnn8-dev")
+    run_cmd("apt-get update && apt-get install -y build-essential cmake git pkg-config")
     
     # Create build directories
     print("Creating build directories...")

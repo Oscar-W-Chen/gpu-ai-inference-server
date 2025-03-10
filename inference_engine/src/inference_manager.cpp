@@ -772,31 +772,6 @@ std::string EscapeJsonString(const std::string& input) {
     return ss.str();
 }
 
-/**
- * @brief Helper to escape strings for JSON
- */
-std::string EscapeJsonString(const std::string& input) {
-    std::ostringstream ss;
-    for (auto ch : input) {
-        switch (ch) {
-            case '\\': ss << "\\\\"; break;
-            case '"': ss << "\\\""; break;
-            case '\b': ss << "\\b"; break;
-            case '\f': ss << "\\f"; break;
-            case '\n': ss << "\\n"; break;
-            case '\r': ss << "\\r"; break;
-            case '\t': ss << "\\t"; break;
-            default:
-                if (ch < 32) {
-                    // For control characters, use \uXXXX format
-                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch);
-                } else {
-                    ss << ch;
-                }
-        }
-    }
-    return ss.str();
-}
 
 /**
  * @brief List all available models in the repository
