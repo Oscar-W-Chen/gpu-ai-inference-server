@@ -9,26 +9,6 @@
 #include <iostream>
 #include <cstring>
 
-// Helper struct to track allocated objects for cleanup
-struct ResourceManager {
-    static std::unordered_map<void*, std::unique_ptr<void>> resources;
-    
-    template<typename T>
-    static T* track(std::unique_ptr<T> ptr) {
-        T* raw_ptr = ptr.get();
-        resources[raw_ptr] = std::move(ptr);
-        return raw_ptr;
-    }
-    
-    static void release(void* ptr) {
-        if (resources.count(ptr) > 0) {
-            resources.erase(ptr);
-        }
-    }
-};
-
-std::unordered_map<void*, std::unique_ptr<void>> ResourceManager::resources;
-
 // Bridge class for InferenceManager
 struct InferenceManager_t {
     // In a real implementation, this would handle model repository
@@ -45,9 +25,11 @@ struct Model_t {
 
 // Bridge class for Tensor
 struct Tensor_t {
-    std::unique_ptr<inference::Tensor> tensor;
+    inference::Tensor tensor;  // Direct object rather than pointer
     
-    Tensor_t(std::unique_ptr<inference::Tensor> t) : tensor(std::move(t)) {}
+    // Constructor with direct parameters
+    Tensor_t(const std::string& name, inference::DataType dtype, const inference::Shape& shape)
+        : tensor(name, dtype, shape) {}
 };
 
 // Helper function to allocate C string copy
@@ -135,11 +117,9 @@ extern "C" {
     // Inference Manager Functions
     InferenceManagerHandle InferenceInitialize(const char* model_repository_path) {
         try {
-            auto manager = std::make_unique<InferenceManager_t>();
+            InferenceManager_t* manager = new InferenceManager_t();
             manager->model_repository_path = model_repository_path ? model_repository_path : "";
-            // In a real implementation, we would scan the repository directory
-            // for models and initialize any necessary resources
-            return ResourceManager::track(std::move(manager));
+            return manager;
         } catch (const std::exception& e) {
             std::cerr << "Exception in InferenceInitialize: " << e.what() << std::endl;
             return nullptr;
@@ -147,9 +127,7 @@ extern "C" {
     }
     
     void InferenceShutdown(InferenceManagerHandle handle) {
-        if (handle) {
-            ResourceManager::release(handle);
-        }
+        delete handle;
     }
     
     bool InferenceLoadModel(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error) {
@@ -160,7 +138,6 @@ extern "C" {
         
         try {
             // In a real implementation, we would load the model from the repository
-            // For now, we'll just create a placeholder
             std::string model_path = handle->model_repository_path + "/" + model_name;
             
             // Check if model is already loaded
@@ -295,9 +272,9 @@ extern "C" {
                 device_id
             );
             
-            // Wrap in bridge class
-            auto bridge = std::make_unique<Model_t>(std::move(model));
-            return ResourceManager::track(std::move(bridge));
+            // Create and return bridge
+            Model_t* handle = new Model_t(std::move(model));
+            return handle;
         } catch (const std::exception& e) {
             if (error) *error = strdup_helper(e.what());
             return nullptr;
@@ -305,9 +282,7 @@ extern "C" {
     }
     
     void ModelDestroy(ModelHandle handle) {
-        if (handle) {
-            ResourceManager::release(handle);
-        }
+        delete handle;
     }
     
     bool ModelLoad(ModelHandle handle, ErrorMessage* error) {
@@ -364,6 +339,8 @@ extern "C" {
         try {
             // Convert C input tensors to C++ tensors
             std::vector<inference::Tensor> cpp_inputs;
+            cpp_inputs.reserve(num_inputs);
+            
             for (int i = 0; i < num_inputs; i++) {
                 const TensorData& input = inputs[i];
                 
@@ -384,7 +361,6 @@ extern "C" {
                 );
                 
                 // Set data - this is simplified for float32 only
-                // In a real implementation, we would handle all supported data types
                 if (input.data_type == DATATYPE_FLOAT32 && input.data && input.data_size > 0) {
                     size_t num_elements = shape.NumElements();
                     std::vector<float> data(num_elements);
@@ -397,6 +373,8 @@ extern "C" {
             
             // Prepare output tensors
             std::vector<inference::Tensor> cpp_outputs;
+            cpp_outputs.reserve(num_outputs);
+            
             for (int i = 0; i < num_outputs; i++) {
                 const TensorData& output = outputs[i];
                 
@@ -553,7 +531,7 @@ extern "C" {
         }
     }
     
-    // Tensor Functions
+    // Tensor Functions - implemented without ResourceManager
     TensorHandle TensorCreate(const char* name, DataType data_type, const Shape* shape, ErrorMessage* error) {
         if (!name || !shape) {
             if (error) *error = strdup_helper("Invalid tensor parameters");
@@ -570,16 +548,14 @@ extern "C" {
                 }
             }
             
-            // Create tensor
-            auto tensor = std::make_unique<inference::Tensor>(
+            // Create tensor directly
+            Tensor_t* handle = new Tensor_t(
                 name,
                 convert_data_type(data_type),
                 cpp_shape
             );
             
-            // Wrap in bridge class
-            auto bridge = std::make_unique<Tensor_t>(std::move(tensor));
-            return ResourceManager::track(std::move(bridge));
+            return handle;
         } catch (const std::exception& e) {
             if (error) *error = strdup_helper(e.what());
             return nullptr;
@@ -587,9 +563,7 @@ extern "C" {
     }
     
     void TensorDestroy(TensorHandle handle) {
-        if (handle) {
-            ResourceManager::release(handle);
-        }
+        delete handle;
     }
     
     bool TensorSetData(TensorHandle handle, const void* data, size_t data_size, ErrorMessage* error) {
@@ -600,12 +574,11 @@ extern "C" {
         
         try {
             // This is simplified for float32 only
-            // In a real implementation, we would handle all supported data types
-            if (handle->tensor->GetDataType() == inference::DataType::FLOAT32) {
-                size_t num_elements = handle->tensor->GetShape().NumElements();
+            if (handle->tensor.GetDataType() == inference::DataType::FLOAT32) {
+                size_t num_elements = handle->tensor.GetShape().NumElements();
                 std::vector<float> float_data(num_elements);
                 memcpy(float_data.data(), data, std::min(data_size, num_elements * sizeof(float)));
-                return handle->tensor->SetData(float_data);
+                return handle->tensor.SetData(float_data);
             } else {
                 if (error) *error = strdup_helper("Unsupported data type");
                 return false;
@@ -624,9 +597,9 @@ extern "C" {
         
         try {
             // This is simplified for float32 only
-            if (handle->tensor->GetDataType() == inference::DataType::FLOAT32) {
+            if (handle->tensor.GetDataType() == inference::DataType::FLOAT32) {
                 std::vector<float> float_data;
-                bool result = handle->tensor->GetData(float_data);
+                bool result = handle->tensor.GetData(float_data);
                 if (result) {
                     size_t bytes_to_copy = std::min(data_size, float_data.size() * sizeof(float));
                     memcpy(data, float_data.data(), bytes_to_copy);
@@ -648,7 +621,7 @@ extern "C" {
         }
         
         try {
-            const inference::Shape& cpp_shape = handle->tensor->GetShape();
+            const inference::Shape& cpp_shape = handle->tensor.GetShape();
             
             // Create C shape
             Shape* shape = new Shape();
@@ -682,7 +655,7 @@ extern "C" {
         }
         
         try {
-            return convert_to_c_data_type(handle->tensor->GetDataType());
+            return convert_to_c_data_type(handle->tensor.GetDataType());
         } catch (...) {
             return DATATYPE_UNKNOWN;
         }
@@ -694,7 +667,7 @@ extern "C" {
         }
         
         try {
-            return strdup_helper(handle->tensor->GetName());
+            return strdup_helper(handle->tensor.GetName());
         } catch (...) {
             return nullptr;
         }
@@ -707,7 +680,7 @@ extern "C" {
         }
         
         try {
-            return handle->tensor->toGPU(device_id);
+            return handle->tensor.toGPU(device_id);
         } catch (const std::exception& e) {
             if (error) *error = strdup_helper(e.what());
             return false;
@@ -721,7 +694,7 @@ extern "C" {
         }
         
         try {
-            return handle->tensor->toCPU();
+            return handle->tensor.toCPU();
         } catch (const std::exception& e) {
             if (error) *error = strdup_helper(e.what());
             return false;

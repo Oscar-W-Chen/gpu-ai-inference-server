@@ -673,6 +673,30 @@ bool InferenceManager::IsModelLoaded(const std::string& model_name, const std::s
     return (it != models_.end() && it->second.state == ModelState::LOADED);
 }
 
+// Helper function to escape strings for JSON output
+std::string EscapeJsonString(const std::string& input) {
+    std::ostringstream ss;
+    for (auto ch : input) {
+        switch (ch) {
+            case '\\': ss << "\\\\"; break;
+            case '"': ss << "\\\""; break;
+            case '\b': ss << "\\b"; break;
+            case '\f': ss << "\\f"; break;
+            case '\n': ss << "\\n"; break;
+            case '\r': ss << "\\r"; break;
+            case '\t': ss << "\\t"; break;
+            default:
+                if (ch < 32) {
+                    // For control characters, use \uXXXX format
+                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch);
+                } else {
+                    ss << ch;
+                }
+        }
+    }
+    return ss.str();
+}
+
 /**
  * @brief Get the current state of a model
  */
@@ -744,32 +768,6 @@ std::string InferenceManager::GetModelStatus(const std::string& model_name, cons
     
     json << "\n}";
     return json.str();
-}
-
-/**
- * @brief Helper to escape strings for JSON
- */
-std::string EscapeJsonString(const std::string& input) {
-    std::ostringstream ss;
-    for (auto ch : input) {
-        switch (ch) {
-            case '\\': ss << "\\\\"; break;
-            case '"': ss << "\\\""; break;
-            case '\b': ss << "\\b"; break;
-            case '\f': ss << "\\f"; break;
-            case '\n': ss << "\\n"; break;
-            case '\r': ss << "\\r"; break;
-            case '\t': ss << "\\t"; break;
-            default:
-                if (ch < 32) {
-                    // For control characters, use \uXXXX format
-                    ss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(ch);
-                } else {
-                    ss << ch;
-                }
-        }
-    }
-    return ss.str();
 }
 
 

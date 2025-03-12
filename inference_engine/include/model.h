@@ -93,6 +93,10 @@ struct ModelMetadata {
 class Tensor {
 public:
     Tensor();
+    Tensor(const Tensor& other);
+    Tensor(Tensor&& other) noexcept;
+    Tensor& operator=(const Tensor& other);
+    
     Tensor(const std::string& name, DataType dtype, const Shape& shape);
     ~Tensor();
 
