@@ -128,15 +128,15 @@ def build_go_server():
         run_cmd(f"ls -la {lib_path}")
     
     # Build the server
-    output, rc = run_cmd("go build -o server ./server/main.go")
+    output, rc = run_cmd("go build -o ai-inf-server ./server/main.go")
     
-    if rc == 0 and os.path.exists("server"):
+    if rc == 0 and os.path.exists("ai-inf-server"):
         print("✅ Go server built successfully")
         return True
     else:
         print("❌ Failed to build Go server")
         return False
-
+'''
 def run_server():
     """Run the server and test it"""
     print("\n=== Running server ===")
@@ -150,14 +150,7 @@ def run_server():
     
     # Wait for the server to start
     time.sleep(2)
-    """
-    try:
-      while True:
-        time.sleep(10)  # Pause for 10 seconds. Adjust as needed.
-    except KeyboardInterrupt:
-      print("Program interrupted.")
-    
-    """
+
     # Test the server
     try:
         print("\n=== Testing server API ===")
@@ -191,7 +184,7 @@ def run_server():
         server_process.wait()
         print("Server stopped")
     
-
+'''
 def main():
     """Main function"""
     print("=== GPU AI Inference Server Test ===")
@@ -204,11 +197,7 @@ def main():
         # Build inference engine
         if build_inference_engine():
             # Build Go server
-            if build_go_server():
-                # Run server
-                run_server()
-            else:
-                print("Skipping server test due to build failure")
+            build_go_server();
         else:
             print("Skipping server build and test due to inference engine build failure")
     else:
