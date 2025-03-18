@@ -8,10 +8,10 @@ AI Inference Server that takes trained AI models, load them into memory, and exe
 - [x] Implement the model and inference_manager files
 - [x] Implement the C to Go binding logic
 - [x] Understand the new files
-- [ ] Update main.go to expose the underlying C++ functionalities to Go server
-- [ ] Complete the notebook such that the Google Colab runs the server directly on Go without containers
+- [x] Update main.go to expose the underlying C++ functionalities to Go server
+- [x] Complete the notebook such that the Google Colab runs the server directly on Go without containers
 - [ ] Add other Go files to set up the full functioning server
-- [ ] Add to documentation under docs/
+- [x] Add to documentation under docs/
 
 
 # Detailed Design
