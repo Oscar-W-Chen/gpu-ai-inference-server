@@ -17,3 +17,19 @@ AI Inference Server that takes trained AI models, load them into memory, and exe
 # Detailed Design
 For top level design diagram, see [here](./docs/design_diagram.md)
 For documentations about key components, dataflow, and component interactions, see [here](./docs/design.md).
+
+# How to run the server in Google Colab
+Google Colab is the required environment to run this server since it has NVIDIA GPUs available
+To run the server:
+1. Run the [INSERT IPYBN NOTEBOOK] to set up the environment. Make sure you replace your own github and ngrok auth tokens
+2. Substitude github auth token and ngrok auth token
+3. Build the server
+   '''
+   !chmod +x /scripts/build_server.py
+   !./scripts/build.server.py
+   '''
+4. Run the server
+   '''
+   !chmod +x /scripts/run_server.h
+   !NGROK_AUTHTOKEN="<TOKEN>" ./gpu-ai-inference-server
+   '''
