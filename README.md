@@ -21,15 +21,14 @@ For documentations about key components, dataflow, and component interactions, s
 # How to run the server in Google Colab
 Google Colab is the required environment to run this server since it has NVIDIA GPUs available
 To run the server:
-1. Run the [INSERT IPYBN NOTEBOOK] to set up the environment. Make sure you replace your own github and ngrok auth tokens
-2. Substitude github auth token and ngrok auth token
-3. Build the server
-   '''
-   !chmod +x /scripts/build_server.py
+1. Open Google Colab environment. Make sure you are connected to a T4 GPU runtime
+2. Open [run_server.ipynb](./run_server.ipynb)
+3. Substitude github username and email, github auth token, and ngrok auth token
+4. Build the server
+   ```
    !./scripts/build.server.py
-   '''
-4. Run the server
-   '''
-   !chmod +x /scripts/run_server.h
-   !NGROK_AUTHTOKEN="<TOKEN>" ./gpu-ai-inference-server
-   '''
+   ```
+5. Run the server
+   ```
+   !./scripts/run_server.sh
+   ```
