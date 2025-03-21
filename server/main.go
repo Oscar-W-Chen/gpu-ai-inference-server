@@ -22,6 +22,39 @@ func main() {
 	}
 }
 
+// getHealth returns the health status of the server
+func getHealth(c *gin.Context) {
+  c.IndentedJSON(http.StatusOK, gin.H{
+			"status": "healthy",
+			"time":   time.Now().Unix(),
+		})
+}
+
+// getCUDAInfo returns if CUDA is available and the device counts
+func getCUDAInfo(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
+  return func(c * gin.Context) {
+    c.IndentedJSON(http.StatusOK, gin.H{
+			"cuda_available": cudaAvailable,
+			"device_count":   deviceCount,
+		})
+  }
+}
+
+// getDevices gets individual device info 
+func getDevices(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cudaAvailable {
+			devices := make([]string, deviceCount)
+			for i := 0; i < deviceCount; i++ {
+				devices[i] = binding.GetDeviceInfo(i)
+			}
+			c.IndentedJSON(http.StatusOK, gin.H{"devices": devices})
+		} else {
+			c.IndentedJSON(http.StatusOK, gin.H{"devices": []string{}})
+		}
+	}
+}
+
 func run(ctx context.Context) error {
 	// Initialize logger
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -43,28 +76,12 @@ func run(ctx context.Context) error {
 
 	// Initialize router
 	router := gin.Default()
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "healthy",
-			"time":   time.Now().Unix(),
-		})
-	})
+	router.GET("/health", getHealth)
 
-	router.GET("/cuda", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"cuda_available": cudaAvailable,
-			"device_count":   deviceCount,
-		})
-	})
+	router.GET("/cuda", getCUDAInfo(cudaAvailable, deviceCount))
 
 	if cudaAvailable {
-		router.GET("/devices", func(c *gin.Context) {
-			devices := make([]string, deviceCount)
-			for i := 0; i < deviceCount; i++ {
-				devices[i] = binding.GetDeviceInfo(i)
-			}
-			c.JSON(http.StatusOK, gin.H{"devices": devices})
-		})
+		router.GET("/devices", getDevices(cudaAvailable, deviceCount))
 	}
 
 	// Start ngrok listener

@@ -1,0 +1,7 @@
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/inference_engine.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/edit_cache.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/rebuild_cache.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/list_install_components.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/install.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/install/local.dir
+/content/gpu-ai-inference-server/build/inference_engine/CMakeFiles/install/strip.dir
