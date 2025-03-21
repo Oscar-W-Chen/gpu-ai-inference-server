@@ -114,6 +114,20 @@ extern "C" {
         return strdup_helper(info);
     }
 
+    CudaMemoryInfo GetMemoryInfo(int device_id) {
+        // Call the C++ function from cuda_utils
+        inference::cuda::MemoryInfo memInfo = inference::cuda::GetMemoryInfo(device_id);
+        
+        // Convert to C struct for the bridge
+        CudaMemoryInfo cInfo;
+        cInfo.total = memInfo.total;
+        cInfo.free = memInfo.free;
+        cInfo.used = memInfo.used;
+        
+        return cInfo;
+    }
+    
+
     // Inference Manager Functions
     InferenceManagerHandle InferenceInitialize(const char* model_repository_path) {
         try {

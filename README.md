@@ -22,7 +22,7 @@ For documentations about key components, dataflow, and component interactions, s
 Google Colab is the required environment to run this server since it has NVIDIA GPUs available
 To run the server:
 1. Open Google Colab environment. Make sure you are connected to a T4 GPU runtime
-2. Open [run_server.ipynb](./run_server.ipynb)
+2. Open [run_server.ipynb](./docs/run_server.ipynb)
 3. Substitude github username and email, github auth token, and ngrok auth token
 4. Build the server
    ```

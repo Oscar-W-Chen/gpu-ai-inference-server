@@ -96,10 +96,18 @@ typedef struct {
     size_t memory_usage_bytes;
 } ModelStats;
 
+// Memory information structure
+typedef struct {
+    size_t total;
+    size_t free;
+    size_t used;
+} CudaMemoryInfo;
+
 // CUDA utility functions
 bool IsCudaAvailable();
 int GetDeviceCount();
 const char* GetDeviceInfo(int device_id);
+CudaMemoryInfo GetMemoryInfo(int device_id);
 
 // Inference Manager functions
 InferenceManagerHandle InferenceInitialize(const char* model_repository_path);
