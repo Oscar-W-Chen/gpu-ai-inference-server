@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,44 +10,88 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Oscar-W-Chen/gpu-ai-inference-server/inference_engine/binding"
 	"github.com/gin-gonic/gin"
+	"golang.ngrok.com/ngrok"
+	"golang.ngrok.com/ngrok/config"
 )
 
 func main() {
-	// Initialize router with default middleware
-	router := gin.Default()
+	if err := run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	// Basic routes
+func run(ctx context.Context) error {
+	// Initialize logger
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Println("Starting AI Inference Server...")
+
+	// Check CUDA availability
+	cudaAvailable := binding.IsCUDAAvailable()
+	deviceCount := binding.GetDeviceCount()
+
+	log.Printf("CUDA Available: %v", cudaAvailable)
+	log.Printf("GPU Device Count: %v", deviceCount)
+
+	if cudaAvailable && deviceCount > 0 {
+		for i := 0; i < deviceCount; i++ {
+			deviceInfo := binding.GetDeviceInfo(i)
+			log.Printf("Device %d: %s", i, deviceInfo)
+		}
+	}
+
+	// Initialize router
+	router := gin.Default()
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"status": "healthy",
 			"time":   time.Now().Unix(),
 		})
 	})
 
-	// Initialize server
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: router,
+	router.GET("/cuda", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"cuda_available": cudaAvailable,
+			"device_count":   deviceCount,
+		})
+	})
+
+	if cudaAvailable {
+		router.GET("/devices", func(c *gin.Context) {
+			devices := make([]string, deviceCount)
+			for i := 0; i < deviceCount; i++ {
+				devices[i] = binding.GetDeviceInfo(i)
+			}
+			c.JSON(http.StatusOK, gin.H{"devices": devices})
+		})
 	}
 
-	// Start server in goroutine
+	// Start ngrok listener
+	listener, err := ngrok.Listen(ctx,
+		config.HTTPEndpoint(),
+		ngrok.WithAuthtokenFromEnv(),
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Println("App URL:", listener.URL())
+
+	// Run the server in a goroutine
+	server := &http.Server{Handler: router}
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v\n", err)
-			os.Exit(1)
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
-	// Graceful shutdown
+	// Graceful shutdown handling
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v\n", err)
-	}
+	log.Println("Shutting down server...")
+  fmt.Println("Server exited")
+	return server.Shutdown(ctx)
 }
