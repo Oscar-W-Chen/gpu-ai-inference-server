@@ -217,7 +217,8 @@ private:
      */
     bool HasModelConfig(const std::filesystem::path& model_path) const {
         // Check for various types of model files or configuration
-        return std::filesystem::exists(model_path / "config.pbtxt") ||
+        return std::filesystem::exists(model_path / "config.json") ||
+               std::filesystem::exists(model_path / "config.pbtxt") ||
                std::filesystem::exists(model_path / "model.onnx") ||
                std::filesystem::exists(model_path / "model.pt") ||
                std::filesystem::exists(model_path / "saved_model.pb");

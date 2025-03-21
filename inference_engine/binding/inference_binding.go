@@ -9,6 +9,7 @@ package binding
 import "C"
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"unsafe"
 )
@@ -266,17 +267,29 @@ func (im *InferenceManager) ListModels() []string {
 
 	var numModels C.int
 	cModels := C.InferenceListModels(im.handle, &numModels)
+
 	if cModels == nil || numModels == 0 {
+		fmt.Println("Debug: no models found or cModels is nil")
 		return nil
 	}
-	defer C.InferenceFreeModelList(cModels, numModels)
 
+	// Convert C array to Go slice
 	models := make([]string, int(numModels))
 	for i := 0; i < int(numModels); i++ {
-		cModel := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cModels)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
-		models[i] = C.GoString(cModel)
+		// Use unsafe pointer arithmetic to get each string
+		modelPtr := (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cModels)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+		if modelPtr != nil && *modelPtr != nil {
+			models[i] = C.GoString(*modelPtr)
+			fmt.Printf("Debug: Got model[%d]: %s\n", i, models[i])
+		} else {
+			fmt.Printf("Debug: Null pointer for model[%d]\n", i)
+		}
 	}
 
+	// Free the C array
+	C.InferenceFreeModelList(cModels, numModels)
+
+	fmt.Printf("Debug: Returning %d models: %v\n", len(models), models)
 	return models
 }
 
