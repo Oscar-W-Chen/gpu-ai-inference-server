@@ -1,3 +1,0 @@
-/content/gpu-ai-inference-server/build/test/CMakeFiles/cuda_test.dir
-/content/gpu-ai-inference-server/build/test/CMakeFiles/edit_cache.dir
-/content/gpu-ai-inference-server/build/test/CMakeFiles/rebuild_cache.dir

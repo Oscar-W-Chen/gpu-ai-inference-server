@@ -1,1 +1,0 @@
-/usr/bin/c++ "CMakeFiles/cuda_test.dir/content/gpu-ai-inference-server/test/cuda_test.cpp.o" -o cuda_test  -Wl,-rpath,/content/gpu-ai-inference-server/build/test/../inference_engine/lib ../inference_engine/lib/libinference_engine.so /usr/local/cuda/lib64/libcudart_static.a -ldl /usr/lib/x86_64-linux-gnu/librt.a
