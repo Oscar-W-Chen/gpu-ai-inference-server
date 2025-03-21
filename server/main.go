@@ -144,6 +144,7 @@ func run(ctx context.Context) error {
 	router.GET("/", serveHome)
 	router.GET("/health", getHealth)
 	router.GET("/cuda", getCUDAInfo(cudaAvailable, deviceCount))
+	router.GET("/models", GetModels)
 
 	if cudaAvailable {
 		router.GET("/devices", getDevices(cudaAvailable, deviceCount))
