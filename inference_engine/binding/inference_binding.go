@@ -107,6 +107,12 @@ type Tensor struct {
 	handle C.TensorHandle
 }
 
+type MemoryInfo struct {
+	Total uint64
+	Free  uint64
+	Used  uint64
+}
+
 // CUDA utility functions
 
 // IsCUDAAvailable checks if CUDA is available on the system
@@ -123,6 +129,28 @@ func GetDeviceCount() int {
 func GetDeviceInfo(deviceID int) string {
 	cInfo := C.GetDeviceInfo(C.int(deviceID))
 	return C.GoString(cInfo)
+}
+
+// GetMemoryInfo returns memory information for a specific GPU device
+func GetMemoryInfo(deviceID int) (MemoryInfo, error) {
+	var info MemoryInfo
+
+	if !IsCUDAAvailable() {
+		return info, errors.New("CUDA is not available")
+	}
+
+	cInfo := C.GetMemoryInfo(C.int(deviceID))
+
+	info.Total = uint64(cInfo.total)
+	info.Free = uint64(cInfo.free)
+	info.Used = uint64(cInfo.used)
+
+	// Verify we got valid data
+	if info.Total == 0 {
+		return info, errors.New("failed to get memory info")
+	}
+
+	return info, nil
 }
 
 // InferenceManager functions

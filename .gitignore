@@ -1,5 +1,5 @@
 # C++ build files
-#/build
+/build
 *.o
 *.so
 *.exe
@@ -15,3 +15,6 @@ docker-compose.override.yml
 *.swp
 *.swo
 *.vscode/*
+
+# server executable
+gpu-ai-inference-server

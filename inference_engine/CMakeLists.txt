@@ -19,6 +19,7 @@ set(SOURCES
     src/inference_bridge.cpp
     src/model.cpp
     src/inference_manager.cpp
+    src/model_repository.cpp
 )
 
 # Create shared library

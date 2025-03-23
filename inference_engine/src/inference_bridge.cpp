@@ -2,6 +2,7 @@
 #include "inference_bridge.h"
 #include "model.h"
 #include "cuda_utils.h"
+#include "model_repository.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -10,9 +11,10 @@
 #include <cstring>
 
 // Bridge class for InferenceManager
+// Bridge class for InferenceManager
 struct InferenceManager_t {
-    // In a real implementation, this would handle model repository
     std::string model_repository_path;
+    std::unique_ptr<inference::ModelRepository> repository;
     std::unordered_map<std::string, std::unique_ptr<inference::Model>> models;
 };
 
@@ -114,11 +116,32 @@ extern "C" {
         return strdup_helper(info);
     }
 
+    CudaMemoryInfo GetMemoryInfo(int device_id) {
+        // Call the C++ function from cuda_utils
+        inference::cuda::MemoryInfo memInfo = inference::cuda::GetMemoryInfo(device_id);
+        
+        // Convert to C struct for the bridge
+        CudaMemoryInfo cInfo;
+        cInfo.total = memInfo.total;
+        cInfo.free = memInfo.free;
+        cInfo.used = memInfo.used;
+        
+        return cInfo;
+    }
+    
+
     // Inference Manager Functions
     InferenceManagerHandle InferenceInitialize(const char* model_repository_path) {
         try {
             InferenceManager_t* manager = new InferenceManager_t();
             manager->model_repository_path = model_repository_path ? model_repository_path : "";
+            
+            // Initialize model repository
+            manager->repository = std::make_unique<inference::ModelRepository>(manager->model_repository_path);
+            if (manager->repository) {
+                manager->repository->ScanRepository();
+            }
+            
             return manager;
         } catch (const std::exception& e) {
             std::cerr << "Exception in InferenceInitialize: " << e.what() << std::endl;
@@ -146,15 +169,23 @@ extern "C" {
                 return false;
             }
             
-            // In a real implementation, we would detect the model type
-            // and load the model with appropriate configuration
-            inference::ModelConfig config;
-            config.name = model_name;
-            config.version = version ? version : "1";
+            // Load the model configuration from repository
+            inference::ModelConfig config = handle->repository->GetModelConfig(model_name, version ? version : "");
+            if (config.type == inference::ModelType::UNKNOWN) {
+                if (error) *error = strdup_helper("Unable to determine model type");
+                return false;
+            }
             
-            // This is just a placeholder - in a real implementation we would load the actual model
-            // handle->models[model_name] = std::make_unique<inference::Model>(
-            //     model_path, inference::ModelType::UNKNOWN, config);
+            // Create and load the model
+            handle->models[model_name] = std::make_unique<inference::Model>(
+                model_path, config.type, config, inference::DeviceType::GPU, 0);
+            
+            if (!handle->models[model_name]->Load()) {
+                std::string err_msg = handle->models[model_name]->GetLastError();
+                handle->models.erase(model_name);
+                if (error) *error = strdup_helper(err_msg);
+                return false;
+            }
             
             return true;
         } catch (const std::exception& e) {
@@ -206,17 +237,38 @@ extern "C" {
         }
         
         try {
-            *num_models = static_cast<int>(handle->models.size());
-            if (*num_models == 0) {
-                return nullptr;
+            // Get models from repository instead of loaded models
+            if (handle->repository) {
+                // Make sure repository is scanned
+                handle->repository->ScanRepository();
+                
+                // Get available models
+                std::vector<std::string> available_models = handle->repository->GetAvailableModels();
+                *num_models = static_cast<int>(available_models.size());
+                
+                if (*num_models == 0) {
+                    return nullptr;
+                }
+                
+                char** models = new char*[*num_models];
+                for (int i = 0; i < *num_models; i++) {
+                    models[i] = strdup_helper(available_models[i]);
+                }
+                return models;
+            } else {
+                // Fall back to listing loaded models if repository isn't available
+                *num_models = static_cast<int>(handle->models.size());
+                if (*num_models == 0) {
+                    return nullptr;
+                }
+                
+                char** models = new char*[*num_models];
+                int i = 0;
+                for (const auto& model : handle->models) {
+                    models[i++] = strdup_helper(model.first);
+                }
+                return models;
             }
-            
-            char** models = new char*[*num_models];
-            int i = 0;
-            for (const auto& model : handle->models) {
-                models[i++] = strdup_helper(model.first);
-            }
-            return models;
         } catch (...) {
             *num_models = 0;
             return nullptr;

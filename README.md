@@ -10,8 +10,12 @@ AI Inference Server that takes trained AI models, load them into memory, and exe
 - [x] Understand the new files
 - [x] Update main.go to expose the underlying C++ functionalities to Go server
 - [x] Complete the notebook such that the Google Colab runs the server directly on Go without containers
-- [ ] Add other Go files to set up the full functioning server
 - [x] Add to documentation under docs/
+- [x] Fully implement ModelRepository and integrate it with the code stack
+- [ ] Fully implement the model specific loading, inferencing, and unloading logic
+- [ ] Put complete model files under /model directory to test loading functions
+- [ ] Add other Go files to set up the full functioning server
+- [ ] Run full end-to-end integration test on AI inferencing on top of GPUs
 
 
 # Detailed Design
@@ -22,7 +26,7 @@ For documentations about key components, dataflow, and component interactions, s
 Google Colab is the required environment to run this server since it has NVIDIA GPUs available
 To run the server:
 1. Open Google Colab environment. Make sure you are connected to a T4 GPU runtime
-2. Open [run_server.ipynb](./run_server.ipynb)
+2. Open [run_server.ipynb](./docs/run_server.ipynb)
 3. Substitude github username and email, github auth token, and ngrok auth token
 4. Build the server
    ```
@@ -31,4 +35,10 @@ To run the server:
 5. Run the server
    ```
    !./scripts/run_server.sh
+   ```
+6. OPTIONAL: on your local terminal (Unable to do this on Google Colab), you can execute the test_client.py script run automated tests against the opened server
+   ```
+   python client/test_client.py --url [https://ngrok-custom-url.app]
+   # For example
+   python client/test_client.py --url https://9a68-34-19-48-151.ngrok-free.app/
    ```
