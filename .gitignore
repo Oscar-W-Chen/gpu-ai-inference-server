@@ -6,6 +6,7 @@
 
 # Go build artifacts
 /server/bin
+/server/main
 *.exe
 
 # Docker files
