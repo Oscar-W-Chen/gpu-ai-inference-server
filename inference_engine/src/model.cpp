@@ -494,7 +494,7 @@ private:
     Model::Stats stats_;
 
     //ONNX Runtime specific members
-    ORT::Env onnx_env;
+    Ort::Env onnx_env;
     std::unique_ptr<Ort::Session> onnx_session_;
     std::vector<std::string> onnx_input_names_;
     std::vector<std::string> onnx_output_names_;
@@ -582,7 +582,7 @@ private:
             std::cout << "Loading ONNX model: " << model_path_ << std::endl;
 
             // Create ONNX Runtime environment
-            ORT::Env onnx_env_ = ORT::Env(ORT_LOGGING_LEVEL_WARNING, "inference-server");
+            Ort::Env onnx_env_ = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "inference-server");
 
             // Create session options
             Ort::SessionOptions session_options;
@@ -611,16 +611,16 @@ private:
             // Set execution mode
             session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
 
-            std::ifstream file(model_file_path, std::ios::binary);
+            std::ifstream file(model_path_, std::ios::binary);
             if (!file.good()) {
-                last_error_ = "ONNX model file not found: " + model_file_path;
+                last_error_ = "ONNX model file not found: " + model_path_;
                 return false;
             }
             file.close();
 
             // Create session
-            std::cout << "Creating ONNX Runtime session for " << model_file_path << std::end;
-            onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, model_file_path.c_str(), session_options);
+            std::cout << "Creating ONNX Runtime session for " << model_path_ << std::endl;
+            onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, model_path_.c_str(), session_options);
 
             // Get model metadata
             Ort::AllocatorWithDefaultOptions allocator;
@@ -958,7 +958,7 @@ private:
 
             // Order input tensors according to model's expected order
             std::vector<Ort::Value> ordered_inputs;
-            ordered_inputs.resize(onnx_input_names_.size());
+            ordered_inputs.reserve(onnx_input_names_.size());
             
             for (size_t i = 0; i < inputs.size(); i++) {
                 auto it = input_name_to_index.find(inputs[i].GetName());
