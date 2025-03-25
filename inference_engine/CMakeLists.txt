@@ -10,6 +10,18 @@ set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75)  # Target older architectures
 find_package(CUDA REQUIRED)
 include_directories(${CUDA_INCLUDE_DIRS})
 
+# ONNX Runtime configuration
+set(ONNXRUNTIME_ROOT "/usr/local/onnxruntime" CACHE PATH "Path to ONNX Runtime installation")
+
+# Check if ONNXRUNTIME_ROOT exists
+if(NOT EXISTS ${ONNXRUNTIME_ROOT})
+    message(FATAL_ERROR "ONNX Runtime directory not found at ${ONNXRUNTIME_ROOT}")
+endif()
+
+# Add ONNX Runtime include and library directories
+include_directories(${ONNXRUNTIME_ROOT}/include)
+link_directories(${ONNXRUNTIME_ROOT}/lib)
+
 # Include directories
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -31,7 +43,9 @@ set_target_properties(inference_engine PROPERTIES
 )
 
 # Link CUDA libraries
-target_link_libraries(inference_engine ${CUDA_LIBRARIES})
+target_link_libraries(inference_engine 
+    ${CUDA_LIBRARIES}
+    onnxruntime)
 
 # Install targets
 install(TARGETS inference_engine
@@ -49,3 +63,4 @@ install(DIRECTORY include/
 message(STATUS "CUDA version: ${CUDA_VERSION}")
 message(STATUS "CUDA libraries: ${CUDA_LIBRARIES}")
 message(STATUS "CUDA include path: ${CUDA_INCLUDE_DIRS}")
+message(STATUS "ONNX Runtime path: ${ONNXRUNTIME_ROOT}")

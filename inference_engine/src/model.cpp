@@ -1,5 +1,11 @@
 #include "model.h"
 #include "cuda_utils.h"
+
+#include <onnxruntime_cxx_api.h>
+#include <onnxruntime_c_api.h>
+#include <cuda_provider_factory.h>
+#include <vector>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <fstream>
@@ -488,6 +494,16 @@ private:
     // Performance statistics
     Model::Stats stats_;
 
+    //ONNX Runtime specific members
+    ORT::Env onnx_env;
+    std::unique_ptr<Ort::Session> onnx_session_;
+    std::vector<std::string> onnx_input_names_;
+    std::vector<std::string> onnx_output_names_;
+    std::vector<std::vector<int64_t>> onnx_input_shapes_;
+    std::vector<std::vector<int64_t>> onnx_output_shapes_;
+    std::vector<ONNXTensorElementDataType> onnx_input_types_;
+    std::vector<ONNXTensorElementDataType> onnx_output_types_;
+
     // Helper methods
     bool FileExists(const std::string& path) {
         std::ifstream file(path);
@@ -563,9 +579,248 @@ private:
     }
     
     bool LoadONNXModel() {
-        // TODO: Implement ONNX model loading
-        last_error_ = "ONNX model loading not implemented";
-        return false;
+        try {
+            std::cout << "Loading ONNX model: " << model_path_ << std::endl;
+
+            // Create ONNX Runtime environment
+            onnx_env_ = ORT::Env(ORT_LOGGING_LEVEL_WARNING, "inference-server");
+
+            // Create session options
+            Ort::SessionOptions session_options;
+
+            // Enable CUDA if available and requested
+            if (device_type_ == DeviceType::GPU && cuda::IsCudaAvailable()) {
+                // Register CUDA provider
+                OrtCUDAProviderOptions cuda_options;
+                cuda_options.device_id = device_id_;
+                cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::OrtCudnnConvAlgoSearchExhaustive;
+                cuda_options.gpu_mem_limit = 0; // No limit
+                cuda_options.arena_extend_strategy = 0; // Default strategy
+                cuda_options.do_copy_in_default_stream = 1;
+
+                session_options.AppendExecutionProvider_CUDA(cuda_options);
+
+                std::cout << "CUDA execution provider registered for ONNX Runtime" << std::endl;
+            }
+
+            // Set graph optimization level
+            session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+            // Set intra-op threat count
+            session_options.SetIntraOpNumThreads(1);
+
+            // Set execution mode
+            session_options.SetExecutionMode(ExecutionMode:ORT_SEQUENTIAL);
+
+            std::ifstream file(model_file_path, std::ios::binary);
+            if (!file.good()) {
+                last_error_ = "ONNX model file not found: " + model_file_path;
+                return false;
+            }
+            file.close();
+
+            // Create session
+            std::cout << "Creating ONNX Runtime session for " << model_file_path << std::end;
+            onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, model_file_path.c_str(), session_options);
+
+            // Get model metadata
+            Ort::AllocatorWithDefaultOptions allocator;
+
+            // Get number of inputs and outputs
+            size_t num_inputs = onnx_session_->GetInputCount();
+            size_t num_outputs = onnx_session_->GetOutputCount();
+
+            std::count << "Model has " << num_inputs << " inputs and " << num_outputs << " outputs" << std::endl;
+
+            // Clear previous data
+            onnx_input_names_.clear();
+            onnx_output_names_.clear();
+            onnx_input_shapes_.clear();
+            onnx_output_shapes_.clear();
+            onnx_input_types_.clear();
+            onnx_output_types_.clear();
+
+            // Get input information
+            onnx_input_names_.resize(num_inputs);
+            onnx_input_shapes_.resize(num_inputs);
+            onnx_input_types_.resize(num_inputs);
+
+            for (size_t i = 0; i < num_inputs; i++) {
+                // Get input name
+                auto input_name = onnx_session_->GetInputNameAllocated(i, allocator);
+                onnx_input_names_[i] = input_name.get();
+                
+                // Get input type
+                Ort::TypeInfo type_info = onnx_session_->GetInputTypeInfo(i);
+                auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+                onnx_input_types_[i] = tensor_info.GetElementType();
+                
+                // Get input shape
+                onnx_input_shapes_[i] = tensor_info.GetShape();
+                
+                // Print input info
+                std::cout << "Input " << i << ": " << onnx_input_names_[i] << ", Type: " << onnx_input_types_[i] << std::endl;
+                std::cout << "  Shape: [";
+                for (size_t j = 0; j < onnx_input_shapes_[i].size(); j++) {
+                    std::cout << onnx_input_shapes_[i][j];
+                    if (j < onnx_input_shapes_[i].size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << "]" << std::endl;
+            }
+
+            // Get output information
+            onnx_output_names_.resize(num_outputs);
+            onnx_output_shapes_.resize(num_outputs);
+            onnx_output_types_.resize(num_outputs);
+
+            for (size_t i = 0; i < num_outputs; i++) {
+                // Get output name
+                auto output_name = onnx_session_->GetOutputNameAllocated(i, allocator);
+                onnx_output_names_[i] = output_name.get();
+                
+                // Get output type
+                Ort::TypeInfo type_info = onnx_session_->GetOutputTypeInfo(i);
+                auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+                onnx_output_types_[i] = tensor_info.GetElementType();
+                
+                // Get output shape
+                onnx_output_shapes_[i] = tensor_info.GetShape();
+                
+                // Print output info
+                std::cout << "Output " << i << ": " << onnx_output_names_[i] << ", Type: " << onnx_output_types_[i] << std::endl;
+                std::cout << "  Shape: [";
+                for (size_t j = 0; j < onnx_output_shapes_[i].size(); j++) {
+                    std::cout << onnx_output_shapes_[i][j];
+                    if (j < onnx_output_shapes_[i].size() - 1) {
+                        std::cout << ", ";
+                    }
+                }
+                std::cout << "]" << std::endl;
+            }
+
+            // Update memory usage statistics
+            stats_.memory_usage_bytes = EstimateModeMemoryUsage();
+
+            std::cout << "ONNX model loaded successfully" << std::endl;
+            return true;
+        } catch (const Ort::Exception& e) {
+            last_error_ = std::string("ONNX Runtime error: ") + e.what();
+            std::cerr << last_error_ << std::endl;
+            return false;
+        } catch (const std::exception& e) {
+            last_error_ = std::string("ONNX model loading error: ") + e.what();
+            std::cerr << last_error_ << std::endl;
+            return false;
+        }
+    }
+
+    // Helper function to convert from ONNX data type to inference::DataType
+    DataType ConvertFromOnnxDataType(ONNXTensorElementDataType onnx_type) {
+        switch (onnx_type) {
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return DataType::FLOAT32;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32: return DataType::INT32;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: return DataType::INT64;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8: return DataType::UINT8;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8: return DataType::INT8;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING: return DataType::STRING;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL: return DataType::BOOL;
+            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16: return DataType::FP16;
+            default: return DataType::UNKNOWN;
+        }
+    }
+
+    // Helper function to convert from inference::DataType to ONNX data type
+    ONNXTensorElementDataType ConvertToOnnxDataType(DataType dtype) {
+        switch (dtype) {
+            case DataType::FLOAT32: return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+            case DataType::INT32: return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+            case DataType::INT64: return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+            case DataType::UINT8: return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+            case DataType::INT8: return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+            case DataType::STRING: return ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING;
+            case DataType::BOOL: return ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
+            case DataType::FP16: return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+            default: return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+        }
+    }
+
+    // Helper function to estimate model memory usage
+    size_t ModelImpl::EstimateModeMemoryUsage() const {
+        // Simplified estimation to calculate ONNX Runtime memory usage
+        size_t total_size = 0;
+
+        // Sum up input tensor sizes
+        for (size_t i = 0; i < onnx_input_shapes_.size(); i++) {
+            size_t tensor_size = 1;
+            for (const auto& dim : onnx_input_shapes_[i]) {
+                if (dim > 0) { // skip dynamic dimensions
+                    tensor_size *= dim;
+                }
+            }
+
+            // Multiply by element size based on data type
+            switch (onnx_input_types_[i]) {
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+                    tensor_size *=4;
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+                    tensor_size *= 8;
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+                    tensor_size *= 1;  // 1 byte
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+                    tensor_size *= 2;  // 2 bytes
+                    break;
+                default:
+                    tensor_size *= 4;  // Default to 4 bytes
+            }
+
+            total_size += tensor_size;
+        }
+
+        // Sum up output tensor sizes
+        for (size_t i = 0; i < onnx_output_shapes_.size(); i++) {
+            size_t tensor_size = 1;
+            for (const auto& dim : onnx_output_shapes_[i]) {
+                if (dim > 0) {  // Skip dynamic dimensions
+                    tensor_size *= dim;
+                }
+            }
+            
+            // Multiply by element size based on data type
+            switch (onnx_output_types_[i]) {
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+                    tensor_size *= 4;  // 4 bytes
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+                    tensor_size *= 8;  // 8 bytes
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+                    tensor_size *= 1;  // 1 byte
+                    break;
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+                    tensor_size *= 2;  // 2 bytes
+                    break;
+                default:
+                    tensor_size *= 4;  // Default to 4 bytes
+            }
+            
+            total_size += tensor_size;
+        }
+
+        // Add a base memory overhead for the model weights and runtime
+        // This is a rough estimation - actual overhead depends on the model
+        constexpr size_t BASE_OVERHEAD_BYTES = 10 * 1024 * 1024; // 10 MB
+        return total_size + BASE_OVERHEAD_BYTES;
     }
     
     bool LoadPyTorchModel() {
@@ -593,9 +848,250 @@ private:
     }
     
     bool InferONNX(const std::vector<Tensor>& inputs, std::vector<Tensor>& outputs) {
-        // TODO: Implement ONNX inference
-        last_error_ = "ONNX inference not implemented";
-        return false;
+        if (!onnx_session_) {
+            last_error_ = "ONNX model is not loaded";
+            return false;
+        }
+
+        try {
+            std::cout << "Running inference with ONNX model" << std::endl;
+
+            auto start_time = std::chrono::high_resolution_clock::now();
+
+            // Create memory info
+            Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+
+            // Prepare input tensors
+            std::vector<Ort::Value> ort_inputs;
+
+            // Map input tensor names to input indices
+            std::unordered_map<std::string, size_t> input_name_to_index;
+            for (size_t i = 0; i < onnx_input_names_.size(); i++) {
+                input_name_to_index[onnx_input_names_[i]] = i;
+            }
+            
+            // Check that we have all required inputs
+            for (const auto& input_name : onnx_input_names_) {
+                bool found = false;
+                for (const auto& input : inputs) {
+                    if (input.GetName() == input_name) {
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (!found) {
+                    last_error_ = "Required input tensor not provided: " + input_name;
+                    return false;
+                }
+            }
+
+            // Convert inputs to ONNX format
+            ort_inputs.reserve(inputs.size());
+            for (const auto& input : inputs) {
+                // Find the index for this input name
+                auto it = input_name_to_index.find(input.GetName());
+                if (it == input_name_to_index.end()) {
+                    // Skip inputs that are not required by the model
+                    continue;
+                }
+                
+                size_t input_idx = it->second;
+                
+                // Get input shape and convert to int64_t
+                const auto& shape = input.GetShape();
+                std::vector<int64_t> input_shape(shape.dims.begin(), shape.dims.end());
+                
+                // Get the element count
+                size_t element_count = shape.NumElements();
+                
+                // Create ONNX tensor based on data type
+                DataType dtype = input.GetDataType();
+    
+                switch (dtype) {
+                    case DataType::FLOAT32: {
+                        std::vector<float> data;
+                        if (!input.GetData(data)) {
+                            last_error_ = "Failed to get FLOAT32 data for input: " + input.GetName();
+                            return false;
+                        }
+                        
+                        if (data.size() != element_count) {
+                            last_error_ = "Input data size mismatch for " + input.GetName();
+                            return false;
+                        }
+                        
+                        Ort::Value tensor = Ort::Value::CreateTensor<float>(
+                            memory_info, data.data(), data.size(),
+                            input_shape.data(), input_shape.size()
+                        );
+                        ort_inputs.push_back(std::move(tensor));
+                        break;
+                    }
+    
+                    case DataType::INT32: {
+                        std::vector<int32_t> data;
+                        if (!input.GetData(data)) {
+                            last_error_ = "Failed to get INT32 data for input: " + input.GetName();
+                            return false;
+                        }
+                        
+                        if (data.size() != element_count) {
+                            last_error_ = "Input data size mismatch for " + input.GetName();
+                            return false;
+                        }
+                        
+                        Ort::Value tensor = Ort::Value::CreateTensor<int32_t>(
+                            memory_info, data.data(), data.size(),
+                            input_shape.data(), input_shape.size()
+                        );
+                        ort_inputs.push_back(std::move(tensor));
+                        break;
+                    }
+    
+                    case DataType::INT32: {
+                        std::vector<int32_t> data;
+                        if (!input.GetData(data)) {
+                            last_error_ = "Failed to get INT32 data for input: " + input.GetName();
+                            return false;
+                        }
+                        
+                        if (data.size() != element_count) {
+                            last_error_ = "Input data size mismatch for " + input.GetName();
+                            return false;
+                        }
+                        
+                        Ort::Value tensor = Ort::Value::CreateTensor<int32_t>(
+                            memory_info, data.data(), data.size(),
+                            input_shape.data(), input_shape.size()
+                        );
+                        ort_inputs.push_back(std::move(tensor));
+                        break;
+                    }
+    
+                    // Add cases for other data types as needed
+                    
+                    default:
+                        last_error_ = "Unsupported data type for input: " + input.GetName();
+                        return false;
+                }
+            }
+
+            // Order input tensors according to model's expected order
+            std::vector<Ort::Value> ordered_inputs;
+            ordered_inputs.resize(onnx_input_names_.size());
+            
+            for (size_t i = 0; i < inputs.size(); i++) {
+                auto it = input_name_to_index.find(inputs[i].GetName());
+                if (it != input_name_to_index.end()) {
+                    size_t model_input_idx = it->second;
+                    if (i < ort_inputs.size()) {
+                        ordered_inputs[model_input_idx] = std::move(ort_inputs[i]);
+                    }
+                }
+            }
+
+            // Prepare output names
+            std::vector<const char*> output_names_cstr;
+            output_names_cstr.reserve(onnx_output_names_.size());
+            for (const auto& name : onnx_output_names_) {
+                output_names_cstr.push_back(name.c_str());
+            }
+
+            // Convert input names to C strings
+            std::vector<const char*> input_names_cstr;
+            input_names_cstr.reserve(onnx_input_names_.size());
+            for (const auto& name : onnx_input_names_) {
+                input_names_cstr.push_back(name.c_str());
+            }
+
+            // Run inference
+            auto ort_outputs = onnx_session_->Run(
+                Ort::RunOptions{nullptr},
+                input_names_cstr.data(),
+                ordered_inputs.data(),
+                ordered_inputs.size(),
+                output_names_cstr.data(),
+                output_names_cstr.size()
+            );
+
+            // Prepare outputs
+            outputs.clear();
+            outputs.reserve(ort_outputs.size());
+
+            // Convert ONNX outputs to our tensor format
+            for (size_t i = 0; i < ort_outputs.size(); i++) {
+                // Get tensor info
+                auto tensor_info = ort_outputs[i].GetTensorTypeAndShapeInfo();
+                auto output_type = tensor_info.GetElementType();
+                auto output_shape = tensor_info.GetShape();
+
+                // Convert shape
+                Shape shape;
+                shape.dims.assign(output_shape.begin(), output_shape.end());
+                
+                // Create tensor with correct name and type
+                Tensor output_tensor(onnx_output_names_[i], ConvertFromOnnxDataType(output_type), shape);
+                
+                // Get tensor data based on type
+                switch (output_type) {
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: {
+                    const float* data = ort_outputs[i].GetTensorData<float>();
+                    size_t element_count = shape.NumElements();
+                    std::vector<float> tensor_data(data, data + element_count);
+                    output_tensor.SetData(tensor_data);
+                    break;
+                }
+                
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32: {
+                    const int32_t* data = ort_outputs[i].GetTensorData<int32_t>();
+                    size_t element_count = shape.NumElements();
+                    std::vector<int32_t> tensor_data(data, data + element_count);
+                    output_tensor.SetData(tensor_data);
+                    break;
+                }
+                
+                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: {
+                    const int64_t* data = ort_outputs[i].GetTensorData<int64_t>();
+                    size_t element_count = shape.NumElements();
+                    std::vector<int64_t> tensor_data(data, data + element_count);
+                    output_tensor.SetData(tensor_data);
+                    break;
+                }
+                
+                // Add other data types as needed
+                
+                default:
+                    // For unsupported types, just create an empty tensor
+                    std::cerr << "Unsupported output data type: " << output_type << std::endl;
+                    break;
+            
+                }
+                
+                outputs.push_back(std::move(output_tensor));
+            }   
+
+            // Measure inference time
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+            
+            // Update statistics
+            stats_.inference_count++;
+            stats_.last_inference_time_ns = duration;
+            stats_.total_inference_time_ns += duration;
+            
+            std::cout << "ONNX inference completed in " << (duration / 1000000.0) << " ms" << std::endl;
+            
+            return true;
+        } catch (const Ort::Exception& e) {
+            last_error_ = std::string("ONNX Runtime inference error: ") + e.what();
+            std::cerr << last_error_ << std::endl;
+            return false;
+        } catch (cosnt std::exception& e) {
+            last_error_ = std::string("ONNX inference error: ") + e.what();
+            std::cerr << last_error_ << std::endl;
+            return false;
+        }
     }
     
     bool InferPyTorch(const std::vector<Tensor>& inputs, std::vector<Tensor>& outputs) {
@@ -619,7 +1115,26 @@ private:
     }
     
     void UnloadONNX() {
-        // TODO: Implement ONNX unloading
+        try {
+            std::cout << "Unloading ONNX model" << std::endl;
+            
+            // Release ONNX Runtime session
+            if (onnx_session_) {
+                onnx_session_.reset();
+            }
+            
+            // Clear cached data
+            onnx_input_names_.clear();
+            onnx_output_names_.clear();
+            onnx_input_shapes_.clear();
+            onnx_output_shapes_.clear();
+            onnx_input_types_.clear();
+            onnx_output_types_.clear();
+            
+            std::cout << "ONNX model unloaded successfully" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error unloading ONNX model: " << e.what() << std::endl;
+        }
     }
     
     void UnloadPyTorch() {
