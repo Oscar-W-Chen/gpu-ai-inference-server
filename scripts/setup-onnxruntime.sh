@@ -57,7 +57,7 @@ curl -L $URL -o onnxruntime.tgz
 tar -xzf onnxruntime.tgz
 
 # Get the extracted directory name
-EXTRACTED_DIR=$(ls | grep "onnxruntime")
+EXTRACTED_DIR=$(ls -d */ | grep "onnxruntime")
 
 # Create installation directory
 sudo mkdir -p $INSTALL_DIR
