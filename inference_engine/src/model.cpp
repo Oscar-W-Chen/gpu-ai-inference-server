@@ -3,7 +3,6 @@
 
 #include <onnxruntime_cxx_api.h>
 #include <onnxruntime_c_api.h>
-#include <cuda_provider_factory.h>
 #include <vector>
 #include <algorithm>
 #include <chrono>
@@ -583,7 +582,7 @@ private:
             std::cout << "Loading ONNX model: " << model_path_ << std::endl;
 
             // Create ONNX Runtime environment
-            onnx_env_ = ORT::Env(ORT_LOGGING_LEVEL_WARNING, "inference-server");
+            ORT::Env onnx_env_ = ORT::Env(ORT_LOGGING_LEVEL_WARNING, "inference-server");
 
             // Create session options
             Ort::SessionOptions session_options;
@@ -610,7 +609,7 @@ private:
             session_options.SetIntraOpNumThreads(1);
 
             // Set execution mode
-            session_options.SetExecutionMode(ExecutionMode:ORT_SEQUENTIAL);
+            session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
 
             std::ifstream file(model_file_path, std::ios::binary);
             if (!file.good()) {
@@ -630,7 +629,7 @@ private:
             size_t num_inputs = onnx_session_->GetInputCount();
             size_t num_outputs = onnx_session_->GetOutputCount();
 
-            std::count << "Model has " << num_inputs << " inputs and " << num_outputs << " outputs" << std::endl;
+            std::cout << "Model has " << num_inputs << " inputs and " << num_outputs << " outputs" << std::endl;
 
             // Clear previous data
             onnx_input_names_.clear();
@@ -747,7 +746,7 @@ private:
     }
 
     // Helper function to estimate model memory usage
-    size_t ModelImpl::EstimateModeMemoryUsage() const {
+    size_t EstimateModeMemoryUsage() const {
         // Simplified estimation to calculate ONNX Runtime memory usage
         size_t total_size = 0;
 
@@ -949,26 +948,6 @@ private:
                         break;
                     }
     
-                    case DataType::INT32: {
-                        std::vector<int32_t> data;
-                        if (!input.GetData(data)) {
-                            last_error_ = "Failed to get INT32 data for input: " + input.GetName();
-                            return false;
-                        }
-                        
-                        if (data.size() != element_count) {
-                            last_error_ = "Input data size mismatch for " + input.GetName();
-                            return false;
-                        }
-                        
-                        Ort::Value tensor = Ort::Value::CreateTensor<int32_t>(
-                            memory_info, data.data(), data.size(),
-                            input_shape.data(), input_shape.size()
-                        );
-                        ort_inputs.push_back(std::move(tensor));
-                        break;
-                    }
-    
                     // Add cases for other data types as needed
                     
                     default:
@@ -1087,7 +1066,7 @@ private:
             last_error_ = std::string("ONNX Runtime inference error: ") + e.what();
             std::cerr << last_error_ << std::endl;
             return false;
-        } catch (cosnt std::exception& e) {
+        } catch (const std::exception& e) {
             last_error_ = std::string("ONNX inference error: ") + e.what();
             std::cerr << last_error_ << std::endl;
             return false;
