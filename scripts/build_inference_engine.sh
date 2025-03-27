@@ -2,6 +2,9 @@
 # Script to build the inference engine library and tests with ONNX Runtime support
 set -e # Exit immediately if a command fails
 
+# Store the original directory to use for relative paths
+ORIGINAL_DIR=$(pwd)
+
 # Check if ONNX Runtime is installed
 if [ ! -d "/usr/local/onnxruntime" ]; then
     echo "ONNX Runtime not found. Installing..."
@@ -80,27 +83,39 @@ if [[ "$*" == *--run-tests* ]]; then
         exit $CUDA_TEST_RESULT
     fi
     
-    # If a model path is provided, run the ONNX test too
+    # Hardcoded path to the test model, adjusted relative to the current directory
+    # Use the ORIGINAL_DIR to compute the absolute path
+    DEFAULT_MODEL_PATH="$ORIGINAL_DIR/models/test_model/1/model.onnx"
+    
+    # Allow override via command line
+    MODEL_PATH="$DEFAULT_MODEL_PATH"
     if [[ "$*" == *--model-path=* ]]; then
-        MODEL_PATH=$(echo "$*" | sed -n 's/.*--model-path=\([^ ]*\).*/\1/p')
-        if [ -d "$MODEL_PATH" ]; then
-            echo "Running ONNX tests with model at $MODEL_PATH..."
-            ./onnx_test "$MODEL_PATH"
-            ONNX_TEST_RESULT=$?
-            if [ $ONNX_TEST_RESULT -eq 0 ]; then
-                echo "ONNX tests passed successfully!"
-            else
-                echo "ONNX tests failed with exit code $ONNX_TEST_RESULT"
-                exit $ONNX_TEST_RESULT
-            fi
+        CUSTOM_PATH=$(echo "$*" | sed -n 's/.*--model-path=\([^ ]*\).*/\1/p')
+        # If the custom path is absolute, use it directly; otherwise, compute relative to ORIGINAL_DIR
+        if [[ "$CUSTOM_PATH" == /* ]]; then
+            MODEL_PATH="$CUSTOM_PATH"
         else
-            echo "Model path $MODEL_PATH does not exist. Skipping ONNX test."
+            MODEL_PATH="$ORIGINAL_DIR/$CUSTOM_PATH"
+        fi
+    fi
+    
+    if [ -e "$MODEL_PATH" ]; then
+        echo "Running ONNX tests with model at $MODEL_PATH..."
+        ./onnx_test "$MODEL_PATH"
+        ONNX_TEST_RESULT=$?
+        if [ $ONNX_TEST_RESULT -eq 0 ]; then
+            echo "ONNX tests passed successfully!"
+        else
+            echo "ONNX tests failed with exit code $ONNX_TEST_RESULT"
+            exit $ONNX_TEST_RESULT
         fi
     else
-        echo "No model path provided. To run ONNX test, use --model-path=<path>"
+        echo "Model file $MODEL_PATH not found. Skipping ONNX test."
+        echo "Please run the following command to create a test model:"
+        echo "python $ORIGINAL_DIR/scripts/create-test-model.py"
     fi
 fi
 
 # Return to the original directory
-cd ../..
+cd "$ORIGINAL_DIR"
 echo "Build process completed successfully"
