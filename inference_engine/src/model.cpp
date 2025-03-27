@@ -10,6 +10,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
+#include <filesystem>
 #include <cstring>        // For memcpy
 #include <cuda_runtime.h> // Need to include cuda_runtime.h for CUDA functions
 
@@ -596,7 +597,7 @@ namespace inference
         Model::Stats stats_;
 
         // ONNX Runtime specific members
-        Ort::Env onnx_env;
+        Ort::Env onnx_env_;
         std::unique_ptr<Ort::Session> onnx_session_;
         std::vector<std::string> onnx_input_names_;
         std::vector<std::string> onnx_output_names_;
@@ -1155,7 +1156,8 @@ namespace inference
                 }
 
                 // Create ONNX input tensors in the order expected by the model
-                std::vector<Ort::Value> ort_inputs(onnx_input_names_.size());
+                std::vector<Ort::Value> ort_inputs;
+                ort_inputs.reserve(onnx_input_names_.size());
 
                 // Convert each input tensor to ONNX format
                 for (const auto &input : inputs)
@@ -1265,13 +1267,6 @@ namespace inference
 
                     outputs.push_back(std::move(output_tensor));
                 }
-
-                // Update statistics
-                stats_.inference_count++;
-                stats_.last_inference_time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                                    std::chrono::high_resolution_clock::now() - start_time)
-                                                    .count();
-                stats_.total_inference_time_ns += stats_.last_inference_time_ns;
 
                 return true;
             }
