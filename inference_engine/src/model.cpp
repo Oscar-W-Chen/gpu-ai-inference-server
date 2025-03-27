@@ -75,7 +75,7 @@ namespace inference
             }
             return shape.NumElements() * element_size;
         }
-        
+
         template <typename T>
         bool SetDataInternal(const std::vector<T> &data, DataType expected_type)
         {
@@ -1112,186 +1112,186 @@ namespace inference
          * @return true if inference succeeded, false if an error occurred
          */
         // Original InferONNX with just a few strategic flushes
-bool InferONNX(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
-{
-    if (!onnx_session_)
-    {
-        last_error_ = "ONNX model is not loaded";
-        return false;
-    }
-
-    try
-    {
-        // Create memory info for CPU allocations
-        Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
-            OrtAllocatorType::OrtArenaAllocator,
-            OrtMemType::OrtMemTypeDefault);
-
-        // Prepare input/output name mappings
-        std::unordered_map<std::string, size_t> input_name_to_index;
-        for (size_t i = 0; i < onnx_input_names_.size(); i++)
+        bool InferONNX(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
-            input_name_to_index[onnx_input_names_[i]] = i;
-        }
-
-        // Check that all required inputs are provided
-        for (const auto &input_name : onnx_input_names_)
-        {
-            if (std::none_of(inputs.begin(), inputs.end(),
-                             [&input_name](const Tensor &t)
-                             { return t.GetName() == input_name; }))
+            if (!onnx_session_)
             {
-                last_error_ = "Required input tensor not provided: " + input_name;
+                last_error_ = "ONNX model is not loaded";
+                return false;
+            }
+
+            try
+            {
+                // Create memory info for CPU allocations
+                Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
+                    OrtAllocatorType::OrtArenaAllocator,
+                    OrtMemType::OrtMemTypeDefault);
+
+                // Prepare input/output name mappings
+                std::unordered_map<std::string, size_t> input_name_to_index;
+                for (size_t i = 0; i < onnx_input_names_.size(); i++)
+                {
+                    input_name_to_index[onnx_input_names_[i]] = i;
+                }
+
+                // Check that all required inputs are provided
+                for (const auto &input_name : onnx_input_names_)
+                {
+                    if (std::none_of(inputs.begin(), inputs.end(),
+                                     [&input_name](const Tensor &t)
+                                     { return t.GetName() == input_name; }))
+                    {
+                        last_error_ = "Required input tensor not provided: " + input_name;
+                        return false;
+                    }
+                }
+
+                // Create C-style input and output name arrays for ONNX Runtime
+                std::vector<const char *> input_names_cstr;
+                std::vector<const char *> output_names_cstr;
+                input_names_cstr.reserve(onnx_input_names_.size());
+                output_names_cstr.reserve(onnx_output_names_.size());
+
+                for (const auto &name : onnx_input_names_)
+                {
+                    input_names_cstr.push_back(name.c_str());
+                }
+                for (const auto &name : onnx_output_names_)
+                {
+                    output_names_cstr.push_back(name.c_str());
+                }
+
+                // Create ONNX input tensors in the order expected by the model
+                std::vector<Ort::Value> ort_inputs;
+                ort_inputs.resize(onnx_input_names_.size());
+
+                // Strategic flush to ensure output is displayed up to this point
+                std::cout.flush();
+
+                // Convert each input tensor to ONNX format
+                for (const auto &input : inputs)
+                {
+                    auto it = input_name_to_index.find(input.GetName());
+                    if (it == input_name_to_index.end())
+                    {
+                        continue; // Skip inputs not required by the model
+                    }
+
+                    size_t input_idx = it->second;
+                    const auto &shape = input.GetShape();
+                    std::vector<int64_t> input_shape(shape.dims.begin(), shape.dims.end());
+
+                    // Convert based on data type
+                    switch (input.GetDataType())
+                    {
+                    case DataType::FLOAT32:
+                    {
+                        std::vector<float> data;
+                        if (!input.GetData(data) || data.size() != shape.NumElements())
+                        {
+                            last_error_ = "Invalid FLOAT32 data for input: " + input.GetName();
+                            return false;
+                        }
+
+                        ort_inputs[input_idx] = Ort::Value::CreateTensor<float>(
+                            memory_info, data.data(), data.size(),
+                            input_shape.data(), input_shape.size());
+                        break;
+                    }
+
+                    case DataType::INT32:
+                    {
+                        std::vector<int32_t> data;
+                        if (!input.GetData(data) || data.size() != shape.NumElements())
+                        {
+                            last_error_ = "Invalid INT32 data for input: " + input.GetName();
+                            return false;
+                        }
+
+                        ort_inputs[input_idx] = Ort::Value::CreateTensor<int32_t>(
+                            memory_info, data.data(), data.size(),
+                            input_shape.data(), input_shape.size());
+                        break;
+                    }
+
+                    default:
+                        last_error_ = "Unsupported data type for input: " + input.GetName();
+                        return false;
+                    }
+                }
+
+                // Run inference
+                auto ort_outputs = onnx_session_->Run(
+                    Ort::RunOptions{nullptr},
+                    input_names_cstr.data(),
+                    ort_inputs.data(),
+                    ort_inputs.size(),
+                    output_names_cstr.data(),
+                    output_names_cstr.size());
+
+                // Strategic flush to ensure output is displayed up to this point
+                std::cout.flush();
+
+                // Convert ONNX outputs to our tensor format
+                outputs.clear();
+                outputs.reserve(ort_outputs.size());
+
+                for (size_t i = 0; i < ort_outputs.size(); i++)
+                {
+                    auto tensor_info = ort_outputs[i].GetTensorTypeAndShapeInfo();
+                    auto output_type = tensor_info.GetElementType();
+                    auto output_shape = tensor_info.GetShape();
+
+                    // Convert shape
+                    Shape shape;
+                    shape.dims.assign(output_shape.begin(), output_shape.end());
+
+                    // Create output tensor
+                    Tensor output_tensor(onnx_output_names_[i], ConvertFromOnnxDataType(output_type), shape);
+
+                    // Copy data based on type
+                    switch (output_type)
+                    {
+                    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+                    {
+                        const float *data = ort_outputs[i].GetTensorData<float>();
+                        std::vector<float> tensor_data(data, data + shape.NumElements());
+                        output_tensor.SetData(tensor_data);
+                        break;
+                    }
+
+                    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+                    {
+                        const int32_t *data = ort_outputs[i].GetTensorData<int32_t>();
+                        std::vector<int32_t> tensor_data(data, data + shape.NumElements());
+                        output_tensor.SetData(tensor_data);
+                        break;
+                    }
+
+                    default:
+                        std::cerr << "Unsupported output data type: " << output_type << std::endl;
+                        break;
+                    }
+
+                    outputs.push_back(std::move(output_tensor));
+                }
+
+                // Final strategic flush
+                std::cout.flush();
+
+                return true;
+            }
+            catch (const Ort::Exception &e)
+            {
+                last_error_ = std::string("ONNX Runtime inference error: ") + e.what();
+                return false;
+            }
+            catch (const std::exception &e)
+            {
+                last_error_ = std::string("ONNX inference error: ") + e.what();
                 return false;
             }
         }
-
-        // Create C-style input and output name arrays for ONNX Runtime
-        std::vector<const char *> input_names_cstr;
-        std::vector<const char *> output_names_cstr;
-        input_names_cstr.reserve(onnx_input_names_.size());
-        output_names_cstr.reserve(onnx_output_names_.size());
-
-        for (const auto &name : onnx_input_names_)
-        {
-            input_names_cstr.push_back(name.c_str());
-        }
-        for (const auto &name : onnx_output_names_)
-        {
-            output_names_cstr.push_back(name.c_str());
-        }
-
-        // Create ONNX input tensors in the order expected by the model
-        std::vector<Ort::Value> ort_inputs;
-        ort_inputs.resize(onnx_input_names_.size());
-
-        // Strategic flush to ensure output is displayed up to this point
-        std::cout.flush();
-
-        // Convert each input tensor to ONNX format
-        for (const auto &input : inputs)
-        {
-            auto it = input_name_to_index.find(input.GetName());
-            if (it == input_name_to_index.end())
-            {
-                continue; // Skip inputs not required by the model
-            }
-
-            size_t input_idx = it->second;
-            const auto &shape = input.GetShape();
-            std::vector<int64_t> input_shape(shape.dims.begin(), shape.dims.end());
-
-            // Convert based on data type
-            switch (input.GetDataType())
-            {
-            case DataType::FLOAT32:
-            {
-                std::vector<float> data;
-                if (!input.GetData(data) || data.size() != shape.NumElements())
-                {
-                    last_error_ = "Invalid FLOAT32 data for input: " + input.GetName();
-                    return false;
-                }
-
-                ort_inputs[input_idx] = Ort::Value::CreateTensor<float>(
-                    memory_info, data.data(), data.size(),
-                    input_shape.data(), input_shape.size());
-                break;
-            }
-
-            case DataType::INT32:
-            {
-                std::vector<int32_t> data;
-                if (!input.GetData(data) || data.size() != shape.NumElements())
-                {
-                    last_error_ = "Invalid INT32 data for input: " + input.GetName();
-                    return false;
-                }
-
-                ort_inputs[input_idx] = Ort::Value::CreateTensor<int32_t>(
-                    memory_info, data.data(), data.size(),
-                    input_shape.data(), input_shape.size());
-                break;
-            }
-
-            default:
-                last_error_ = "Unsupported data type for input: " + input.GetName();
-                return false;
-            }
-        }
-
-        // Run inference
-        auto ort_outputs = onnx_session_->Run(
-            Ort::RunOptions{nullptr},
-            input_names_cstr.data(),
-            ort_inputs.data(),
-            ort_inputs.size(),
-            output_names_cstr.data(),
-            output_names_cstr.size());
-
-        // Strategic flush to ensure output is displayed up to this point
-        std::cout.flush();
-
-        // Convert ONNX outputs to our tensor format
-        outputs.clear();
-        outputs.reserve(ort_outputs.size());
-
-        for (size_t i = 0; i < ort_outputs.size(); i++)
-        {
-            auto tensor_info = ort_outputs[i].GetTensorTypeAndShapeInfo();
-            auto output_type = tensor_info.GetElementType();
-            auto output_shape = tensor_info.GetShape();
-
-            // Convert shape
-            Shape shape;
-            shape.dims.assign(output_shape.begin(), output_shape.end());
-
-            // Create output tensor
-            Tensor output_tensor(onnx_output_names_[i], ConvertFromOnnxDataType(output_type), shape);
-
-            // Copy data based on type
-            switch (output_type)
-            {
-            case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-            {
-                const float *data = ort_outputs[i].GetTensorData<float>();
-                std::vector<float> tensor_data(data, data + shape.NumElements());
-                output_tensor.SetData(tensor_data);
-                break;
-            }
-
-            case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-            {
-                const int32_t *data = ort_outputs[i].GetTensorData<int32_t>();
-                std::vector<int32_t> tensor_data(data, data + shape.NumElements());
-                output_tensor.SetData(tensor_data);
-                break;
-            }
-
-            default:
-                std::cerr << "Unsupported output data type: " << output_type << std::endl;
-                break;
-            }
-
-            outputs.push_back(std::move(output_tensor));
-        }
-
-        // Final strategic flush
-        std::cout.flush();
-        
-        return true;
-    }
-    catch (const Ort::Exception &e)
-    {
-        last_error_ = std::string("ONNX Runtime inference error: ") + e.what();
-        return false;
-    }
-    catch (const std::exception &e)
-    {
-        last_error_ = std::string("ONNX inference error: ") + e.what();
-        return false;
-    }
-}
 
         bool InferPyTorch(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {

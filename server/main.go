@@ -6,14 +6,15 @@ import (
 	"log"
 	"net/http"
 	"os"
-  "path/filepath"
-  "sort"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
 	"github.com/Oscar-W-Chen/gpu-ai-inference-server/inference_engine/binding"
 	"github.com/gin-gonic/gin"
+	"github.com/gomarkdown/markdown"
 	"golang.ngrok.com/ngrok"
 	"golang.ngrok.com/ngrok/config"
 )
@@ -24,20 +25,78 @@ func main() {
 	}
 }
 
-// serveHome serves the default HTML page
+// serveHome serves the default HTML page with API docs
 func serveHome(c *gin.Context) {
+	// Try to read the API documentation markdown file
+	apiDocsPath := "./docs/api.md"
+	apiDocsHTML := ""
+
+	// Read the markdown file
+	mdContent, err := os.ReadFile(apiDocsPath)
+	if err == nil {
+		// Convert markdown to HTML
+		// Note: You'll need a markdown parser. Let's use a simple one.
+		// Add this to your imports: "github.com/gomarkdown/markdown"
+		// And install it with: go get github.com/gomarkdown/markdown
+		htmlContent := markdown.ToHTML(mdContent, nil, nil)
+		apiDocsHTML = string(htmlContent)
+	} else {
+		// If we can't read the file, provide a fallback
+		apiDocsHTML = "<p>API documentation not available.</p>"
+	}
+
+	// Serve the HTML with embedded API docs
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`
-		<!DOCTYPE html>
-		<html>
-		<head>
-			<title>AI Inference Server</title>
-		</head>
-		<body>
-			<h1>Welcome to Oscar Chen's AI Inference Server!</h1>
-			<h3>Leverage NVIDIA GPUs on Google Colab to load and run inference on your desired models</h3>
-		</body>
-		</html>
-	`))
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>AI Inference Server</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    margin: 0;
+                    padding: 20px;
+                    max-width: 1200px;
+                    margin: 0 auto;
+                }
+                h1, h2, h3 {
+                    color: #333;
+                }
+                h1 {
+                    border-bottom: 2px solid #eee;
+                    padding-bottom: 10px;
+                }
+                pre {
+                    background: #f4f4f4;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 15px;
+                    overflow: auto;
+                }
+                code {
+                    background: #f4f4f4;
+                    padding: 2px 5px;
+                    border-radius: 3px;
+                }
+                .container {
+                    margin-top: 30px;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>Welcome to Oscar Chen's AI Inference Server!</h1>
+            <h3>Leverage NVIDIA GPUs on Google Colab to load and run inference on your desired models</h3>
+            
+            <div class="container">
+                <h2>API Documentation</h2>
+                <div class="api-docs">
+                    `+apiDocsHTML+`
+                </div>
+            </div>
+        </body>
+        </html>
+    `))
 }
 
 // getHealth returns the health status of the server
@@ -141,111 +200,111 @@ func GetModels(c *gin.Context) {
 
 // LoadModel loads a model from the repository
 func LoadModel(c *gin.Context) {
-    // Get model name from URL
-    modelName := c.Param("name")
+	// Get model name from URL
+	modelName := c.Param("name")
 
-    // Get version from query parameter (optional)
-    version := c.Query("version")
+	// Get version from query parameter (optional)
+	version := c.Query("version")
 
-    // Create repository path
-    repoPath := "./models"
-    
-    // Debug logging
-    log.Printf("Debug: Loading model '%s' version '%s' from repo '%s'", modelName, version, repoPath)
+	// Create repository path
+	repoPath := "./models"
 
-    // Check if model directory exists
-    modelDir := filepath.Join(repoPath, modelName)
-    if _, err := os.Stat(modelDir); os.IsNotExist(err) {
-        log.Printf("Debug: Model directory not found at '%s'", modelDir)
-        c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model directory not found"})
-        return
-    }
+	// Debug logging
+	log.Printf("Debug: Loading model '%s' version '%s' from repo '%s'", modelName, version, repoPath)
 
-    // Check model version directory and file
-    var versionToUse string
-    if version == "" {
-        // Try to find latest version if not specified
-        entries, err := os.ReadDir(modelDir)
-        if err != nil || len(entries) == 0 {
-            log.Printf("Debug: Cannot read model versions in '%s': %v", modelDir, err)
-            c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Cannot read model versions"})
-            return
-        }
+	// Check if model directory exists
+	modelDir := filepath.Join(repoPath, modelName)
+	if _, err := os.Stat(modelDir); os.IsNotExist(err) {
+		log.Printf("Debug: Model directory not found at '%s'", modelDir)
+		c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model directory not found"})
+		return
+	}
 
-        // Find directories that might be versions
-        var versions []string
-        for _, entry := range entries {
-            if entry.IsDir() {
-                versionDir := entry.Name()
-                possiblePath := filepath.Join(modelDir, versionDir, "model.onnx")
-                if _, err := os.Stat(possiblePath); err == nil {
-                    log.Printf("Debug: Found model version: %s at '%s'", versionDir, possiblePath)
-                    versions = append(versions, versionDir)
-                }
-            }
-        }
+	// Check model version directory and file
+	var versionToUse string
+	if version == "" {
+		// Try to find latest version if not specified
+		entries, err := os.ReadDir(modelDir)
+		if err != nil || len(entries) == 0 {
+			log.Printf("Debug: Cannot read model versions in '%s': %v", modelDir, err)
+			c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Cannot read model versions"})
+			return
+		}
 
-        if len(versions) == 0 {
-            log.Printf("Debug: No valid model versions found in '%s'", modelDir)
-            c.IndentedJSON(http.StatusNotFound, gin.H{"error": "No valid model versions found"})
-            return
-        }
+		// Find directories that might be versions
+		var versions []string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				versionDir := entry.Name()
+				possiblePath := filepath.Join(modelDir, versionDir, "model.onnx")
+				if _, err := os.Stat(possiblePath); err == nil {
+					log.Printf("Debug: Found model version: %s at '%s'", versionDir, possiblePath)
+					versions = append(versions, versionDir)
+				}
+			}
+		}
 
-        // Sort versions (simple string sort for now)
-        sort.Strings(versions)
-        versionToUse = versions[len(versions)-1] // Use last (highest) version
-        log.Printf("Debug: Selected latest version: %s", versionToUse)
-    } else {
-        versionToUse = version
-        modelVersionPath := filepath.Join(modelDir, versionToUse)
-        modelPath := filepath.Join(modelVersionPath, "model.onnx")
-        
-        // Check if specified version exists
-        if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-            log.Printf("Debug: Model file not found at '%s'", modelPath)
-            c.IndentedJSON(http.StatusNotFound, gin.H{
-                "error": fmt.Sprintf("Model version '%s' not found", versionToUse),
-            })
-            return
-        }
-        log.Printf("Debug: Found specified model version at '%s'", modelPath)
-    }
+		if len(versions) == 0 {
+			log.Printf("Debug: No valid model versions found in '%s'", modelDir)
+			c.IndentedJSON(http.StatusNotFound, gin.H{"error": "No valid model versions found"})
+			return
+		}
 
-    // Create inference manager with repository path
-    manager, err := binding.NewInferenceManager(repoPath)
-    if err != nil {
-        log.Printf("Debug: Failed to create inference manager: %v", err)
-        c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
-    defer manager.Shutdown()
+		// Sort versions (simple string sort for now)
+		sort.Strings(versions)
+		versionToUse = versions[len(versions)-1] // Use last (highest) version
+		log.Printf("Debug: Selected latest version: %s", versionToUse)
+	} else {
+		versionToUse = version
+		modelVersionPath := filepath.Join(modelDir, versionToUse)
+		modelPath := filepath.Join(modelVersionPath, "model.onnx")
 
-    // Check if model is already loaded
-    if manager.IsModelLoaded(modelName, versionToUse) {
-        log.Printf("Debug: Model '%s' version '%s' is already loaded", modelName, versionToUse)
-        c.IndentedJSON(http.StatusCreated, gin.H{
-            "message": "Model already loaded",
-            "name":    modelName,
-            "version": versionToUse,
-        })
-        return
-    }
+		// Check if specified version exists
+		if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+			log.Printf("Debug: Model file not found at '%s'", modelPath)
+			c.IndentedJSON(http.StatusNotFound, gin.H{
+				"error": fmt.Sprintf("Model version '%s' not found", versionToUse),
+			})
+			return
+		}
+		log.Printf("Debug: Found specified model version at '%s'", modelPath)
+	}
 
-    // Load the model
-    log.Printf("Debug: Attempting to load model '%s' version '%s'", modelName, versionToUse)
-    err = manager.LoadModel(modelName, versionToUse)
-    if err != nil {
-        log.Printf("Debug: Failed to load model: %v", err)
-        c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
+	// Create inference manager with repository path
+	manager, err := binding.NewInferenceManager(repoPath)
+	if err != nil {
+		log.Printf("Debug: Failed to create inference manager: %v", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer manager.Shutdown()
 
-    log.Printf("Debug: Successfully loaded model '%s' version '%s'", modelName, versionToUse)
-    c.IndentedJSON(http.StatusOK, gin.H{
-        "message": "Model loaded successfully",
-        "name":    modelName,
-        "version": versionToUse,
-    })
+	// Check if model is already loaded
+	if manager.IsModelLoaded(modelName, versionToUse) {
+		log.Printf("Debug: Model '%s' version '%s' is already loaded", modelName, versionToUse)
+		c.IndentedJSON(http.StatusCreated, gin.H{
+			"message": "Model already loaded",
+			"name":    modelName,
+			"version": versionToUse,
+		})
+		return
+	}
+
+	// Load the model
+	log.Printf("Debug: Attempting to load model '%s' version '%s'", modelName, versionToUse)
+	err = manager.LoadModel(modelName, versionToUse)
+	if err != nil {
+		log.Printf("Debug: Failed to load model: %v", err)
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("Debug: Successfully loaded model '%s' version '%s'", modelName, versionToUse)
+	c.IndentedJSON(http.StatusOK, gin.H{
+		"message": "Model loaded successfully",
+		"name":    modelName,
+		"version": versionToUse,
+	})
 }
 
 // UnloadModel unloads a model from the server
@@ -291,84 +350,84 @@ func UnloadModel(c *gin.Context) {
 
 // GetModelStatus gets detailed status information about a specific model
 func GetModelStatus(c *gin.Context) {
-    // Get model name from URL
-    modelName := c.Param("name")
+	// Get model name from URL
+	modelName := c.Param("name")
 
-    // Get version from query parameter (optional)
-    version := c.Query("version")
+	// Get version from query parameter (optional)
+	version := c.Query("version")
 
-    // Create repository path
-    repoPath := "./models"
-    
-    // Debug logging
-    log.Printf("Debug: Getting status for model '%s' version '%s' from repo '%s'", modelName, version, repoPath)
+	// Create repository path
+	repoPath := "./models"
 
-    // Check if model directory exists
-    modelDir := filepath.Join(repoPath, modelName)
-    if _, err := os.Stat(modelDir); os.IsNotExist(err) {
-        log.Printf("Debug: Model directory not found at '%s'", modelDir)
-        c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model not found in repository"})
-        return
-    }
+	// Debug logging
+	log.Printf("Debug: Getting status for model '%s' version '%s' from repo '%s'", modelName, version, repoPath)
 
-    // Find available versions
-    versions := []string{}
-    entries, err := os.ReadDir(modelDir)
-    if err == nil {
-        for _, entry := range entries {
-            if entry.IsDir() {
-                versionDir := entry.Name()
-                possiblePath := filepath.Join(modelDir, versionDir, "model.onnx")
-                if _, err := os.Stat(possiblePath); err == nil {
-                    versions = append(versions, versionDir)
-                }
-            }
-        }
-    }
+	// Check if model directory exists
+	modelDir := filepath.Join(repoPath, modelName)
+	if _, err := os.Stat(modelDir); os.IsNotExist(err) {
+		log.Printf("Debug: Model directory not found at '%s'", modelDir)
+		c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model not found in repository"})
+		return
+	}
 
-    // Create inference manager with repository path
-    manager, err := binding.NewInferenceManager(repoPath)
-    if err != nil {
-        c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
-    defer manager.Shutdown()
+	// Find available versions
+	versions := []string{}
+	entries, err := os.ReadDir(modelDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				versionDir := entry.Name()
+				possiblePath := filepath.Join(modelDir, versionDir, "model.onnx")
+				if _, err := os.Stat(possiblePath); err == nil {
+					versions = append(versions, versionDir)
+				}
+			}
+		}
+	}
 
-    // Check if model exists in repository
-    models := manager.ListModels()
-    modelExists := false
-    for _, name := range models {
-        if name == modelName {
-            modelExists = true
-            break
-        }
-    }
+	// Create inference manager with repository path
+	manager, err := binding.NewInferenceManager(repoPath)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer manager.Shutdown()
 
-    if !modelExists {
-        c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model not found in repository"})
-        return
-    }
+	// Check if model exists in repository
+	models := manager.ListModels()
+	modelExists := false
+	for _, name := range models {
+		if name == modelName {
+			modelExists = true
+			break
+		}
+	}
 
-    // Check if model is loaded and get its status
-    versionToCheck := version
-    if versionToCheck == "" && len(versions) > 0 {
-        // Sort versions
-        sort.Strings(versions)
-        versionToCheck = versions[len(versions)-1] // Latest version
-    }
-    
-    isLoaded := manager.IsModelLoaded(modelName, versionToCheck)
+	if !modelExists {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Model not found in repository"})
+		return
+	}
 
-    // Build model status
-    modelStatus := gin.H{
-        "name":            modelName,
-        "version":         versionToCheck,
-        "is_loaded":       isLoaded,
-        "repository_path": filepath.Join(repoPath, modelName),
-        "available_versions": versions,
-    }
+	// Check if model is loaded and get its status
+	versionToCheck := version
+	if versionToCheck == "" && len(versions) > 0 {
+		// Sort versions
+		sort.Strings(versions)
+		versionToCheck = versions[len(versions)-1] // Latest version
+	}
 
-    c.IndentedJSON(http.StatusOK, modelStatus)
+	isLoaded := manager.IsModelLoaded(modelName, versionToCheck)
+
+	// Build model status
+	modelStatus := gin.H{
+		"name":               modelName,
+		"version":            versionToCheck,
+		"is_loaded":          isLoaded,
+		"repository_path":    filepath.Join(repoPath, modelName),
+		"available_versions": versions,
+	}
+
+	c.IndentedJSON(http.StatusOK, modelStatus)
 }
 
 func run(ctx context.Context) error {

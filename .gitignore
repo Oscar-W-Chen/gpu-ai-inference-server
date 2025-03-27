@@ -19,3 +19,6 @@ docker-compose.override.yml
 
 # server executable
 gpu-ai-inference-server
+
+#other installed packages
+*.tar.gz
