@@ -3,6 +3,9 @@
 #include "model.h"
 #include "cuda_utils.h"
 #include "model_repository.h"
+#include <fstream>
+#include <iomanip>  // for std::setw, std::hex, etc.
+#include <sstream>  // for std::stringstream
 #include <string>
 #include <vector>
 #include <memory>
@@ -154,45 +157,135 @@ extern "C" {
     }
     
     bool InferenceLoadModel(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error) {
-        if (!handle || !model_name) {
-            if (error) *error = strdup_helper("Invalid handle or model name");
+    if (!handle || !model_name) {
+        if (error) *error = strdup_helper("Invalid handle or model name");
+        return false;
+    }
+    
+    try {
+        std::cerr << "Debug [InferenceLoadModel]: Loading model: " << model_name 
+                  << ", version: " << (version ? version : "latest")
+                  << ", repo path: " << handle->model_repository_path << std::endl;
+        
+        // In a real implementation, we would load the model from the repository
+        if (!handle->repository) {
+            std::cerr << "Debug [InferenceLoadModel]: Repository is null" << std::endl;
+            if (error) *error = strdup_helper("Repository is not initialized");
             return false;
         }
         
-        try {
-            // In a real implementation, we would load the model from the repository
-            std::string model_path = handle->model_repository_path + "/" + model_name;
-            
-            // Check if model is already loaded
-            if (handle->models.find(model_name) != handle->models.end()) {
-                if (error) *error = strdup_helper("Model already loaded");
-                return false;
-            }
-            
-            // Load the model configuration from repository
-            inference::ModelConfig config = handle->repository->GetModelConfig(model_name, version ? version : "");
-            if (config.type == inference::ModelType::UNKNOWN) {
-                if (error) *error = strdup_helper("Unable to determine model type");
-                return false;
-            }
-            
-            // Create and load the model
-            handle->models[model_name] = std::make_unique<inference::Model>(
-                model_path, config.type, config, inference::DeviceType::GPU, 0);
-            
-            if (!handle->models[model_name]->Load()) {
-                std::string err_msg = handle->models[model_name]->GetLastError();
-                handle->models.erase(model_name);
-                if (error) *error = strdup_helper(err_msg);
-                return false;
-            }
-            
-            return true;
-        } catch (const std::exception& e) {
-            if (error) *error = strdup_helper(e.what());
+        // Get model path and configuration from repository
+        std::string resolved_version = version ? version : handle->repository->GetLatestVersion(model_name);
+        std::string model_path = handle->repository->GetModelPath(model_name, resolved_version);
+        
+        std::cerr << "Debug [InferenceLoadModel]: Resolved version: " << resolved_version << std::endl;
+        std::cerr << "Debug [InferenceLoadModel]: Resolved model path: " << model_path << std::endl;
+        
+        // Verify that the model directory exists
+        if (!std::filesystem::exists(model_path)) {
+            std::cerr << "Debug [InferenceLoadModel]: Model path does not exist: " << model_path << std::endl;
+            if (error) *error = strdup_helper(("Model path not found: " + model_path).c_str());
             return false;
         }
+        
+        // Check if model is already loaded
+        if (handle->models.find(model_name) != handle->models.end()) {
+            std::cerr << "Debug [InferenceLoadModel]: Model already loaded: " << model_name << std::endl;
+            if (error) *error = strdup_helper("Model already loaded");
+            return false;
+        }
+        
+        // Check for model.onnx file
+        std::string onnx_file_path = model_path + "/model.onnx";
+        if (std::filesystem::exists(onnx_file_path)) {
+            std::cerr << "Debug [InferenceLoadModel]: Found ONNX file at: " << onnx_file_path << std::endl;
+            std::cerr << "Debug [InferenceLoadModel]: File size: " 
+                      << std::filesystem::file_size(onnx_file_path) << " bytes" << std::endl;
+            
+            // Try to read a few bytes to check if file is accessible
+            std::ifstream file(onnx_file_path, std::ios::binary);
+            if (file.is_open()) {
+                char header[16];
+                file.read(header, sizeof(header));
+                std::cerr << "Debug [InferenceLoadModel]: Successfully read " 
+                          << file.gcount() << " bytes from file" << std::endl;
+                
+                // Print first few bytes in hex for debugging
+                std::stringstream ss;
+                ss << "Debug [InferenceLoadModel]: File header bytes: ";
+                for (int i = 0; i < file.gcount() && i < 16; i++) {
+                    ss << std::hex << std::setw(2) << std::setfill('0') 
+                       << (int)(unsigned char)header[i] << " ";
+                }
+                std::cerr << ss.str() << std::endl;
+            } else {
+                std::cerr << "Debug [InferenceLoadModel]: Failed to open file for reading" << std::endl;
+                if (error) *error = strdup_helper(("Cannot read model file: " + onnx_file_path).c_str());
+                return false;
+            }
+        } else {
+            std::cerr << "Debug [InferenceLoadModel]: ONNX file not found at: " << onnx_file_path << std::endl;
+            
+            // List directory contents to see what's there
+            std::cerr << "Debug [InferenceLoadModel]: Directory contents of " << model_path << ":" << std::endl;
+            for (const auto& entry : std::filesystem::directory_iterator(model_path)) {
+                std::cerr << "  - " << entry.path().filename().string();
+                if (entry.is_directory()) {
+                    std::cerr << " (directory)";
+                } else {
+                    std::cerr << " (" << std::filesystem::file_size(entry.path()) << " bytes)";
+                }
+                std::cerr << std::endl;
+            }
+        }
+        
+        // Load the model configuration from repository
+        inference::ModelConfig config = handle->repository->GetModelConfig(model_name, resolved_version);
+        if (config.type == inference::ModelType::UNKNOWN) {
+            std::cerr << "Debug [InferenceLoadModel]: Unable to determine model type for: " 
+                      << model_name << std::endl;
+            if (error) *error = strdup_helper("Unable to determine model type");
+            return false;
+        }
+        
+        std::cerr << "Debug [InferenceLoadModel]: Model type determined: " 
+                  << static_cast<int>(config.type) << std::endl;
+        std::cerr << "Debug [InferenceLoadModel]: Input names (" 
+                  << config.input_names.size() << "): ";
+        for (const auto& name : config.input_names) {
+            std::cerr << name << " ";
+        }
+        std::cerr << std::endl;
+        
+        std::cerr << "Debug [InferenceLoadModel]: Output names (" 
+                  << config.output_names.size() << "): ";
+        for (const auto& name : config.output_names) {
+            std::cerr << name << " ";
+        }
+        std::cerr << std::endl;
+        
+        // Create and load the model
+        std::cerr << "Debug [InferenceLoadModel]: Creating model instance" << std::endl;
+        handle->models[model_name] = std::make_unique<inference::Model>(
+            model_path, config.type, config, inference::DeviceType::GPU, 0);
+        
+        std::cerr << "Debug [InferenceLoadModel]: Loading model" << std::endl;
+        if (!handle->models[model_name]->Load()) {
+            std::string err_msg = handle->models[model_name]->GetLastError();
+            std::cerr << "Debug [InferenceLoadModel]: Load failed: " << err_msg << std::endl;
+            handle->models.erase(model_name);
+            if (error) *error = strdup_helper(err_msg.c_str());
+            return false;
+        }
+        
+        std::cerr << "Debug [InferenceLoadModel]: Model loaded successfully" << std::endl;
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Debug [InferenceLoadModel]: Exception: " << e.what() << std::endl;
+        if (error) *error = strdup_helper(e.what());
+        return false;
     }
+}
     
     bool InferenceUnloadModel(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error) {
         if (!handle || !model_name) {

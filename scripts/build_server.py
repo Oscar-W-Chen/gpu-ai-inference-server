@@ -98,7 +98,7 @@ def build_inference_engine():
     run_cmd("chmod +x scripts/build_inference_engine.sh")
     
     # Run build script
-    run_cmd("./scripts/build_inference_engine.sh")
+    run_cmd("./scripts/build_inference_engine.sh --run-tests")
     
     # Verify the lib was created
     if os.path.exists("build/inference_engine/lib/libinference_engine.so"):

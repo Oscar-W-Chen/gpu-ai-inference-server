@@ -93,10 +93,12 @@ bool ModelRepository::ModelExists(const std::string& model_name, const std::stri
     return std::find(it->second.begin(), it->second.end(), version) != it->second.end();
 }
 
+// Add debug logging to the function
 std::string ModelRepository::GetModelPath(const std::string& model_name, const std::string& version) const {
     // Check if model exists in our registry
     auto it = model_versions_.find(model_name);
     if (it == model_versions_.end() || it->second.empty()) {
+        std::cerr << "Debug: Model not found in registry: " << model_name << std::endl;
         return "";
     }
 
@@ -105,16 +107,20 @@ std::string ModelRepository::GetModelPath(const std::string& model_name, const s
     if (model_version.empty()) {
         // Use latest version if none specified
         model_version = it->second.front();
+        std::cerr << "Debug: Using latest version: " << model_version << std::endl;
     } else {
         // Check if requested version exists
         auto version_it = std::find(it->second.begin(), it->second.end(), model_version);
         if (version_it == it->second.end()) {
+            std::cerr << "Debug: Version not found: " << model_version << std::endl;
             return "";
         }
     }
 
     // Construct and return the full path
-    return std::filesystem::path(repository_path_) / model_name / model_version;
+    std::string path = std::filesystem::path(repository_path_) / model_name / model_version;
+    std::cerr << "Debug: Constructed model path: " << path << std::endl;
+    return path;
 }
 
 ModelConfig ModelRepository::GetModelConfig(const std::string& model_name, const std::string& version) const {

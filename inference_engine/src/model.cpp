@@ -708,10 +708,14 @@ namespace inference
         {
             try
             {
+                // Construct the full path to the ONNX file
+                std::string onnx_file_path = model_path_ + "/model.onnx";
+                std::cout << "Debug [LoadONNXModel]: Full ONNX file path: " << onnx_file_path << std::endl;
+
                 // Verify the model file exists
-                if (!std::filesystem::exists(model_path_))
+                if (!std::filesystem::exists(onnx_file_path))
                 {
-                    last_error_ = "ONNX model file not found: " + model_path_;
+                    last_error_ = "ONNX model file not found: " + onnx_file_path;
                     return false;
                 }
 
@@ -722,8 +726,9 @@ namespace inference
                 Ort::SessionOptions session_options;
                 ConfigureSessionOptions(session_options);
 
-                // Create ONNX Runtime session for the model
-                onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, model_path_.c_str(), session_options);
+                // Create ONNX Runtime session with the FULL file path
+                std::cout << "Debug [LoadONNXModel]: Creating session with file: " << onnx_file_path << std::endl;
+                onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, onnx_file_path.c_str(), session_options);
 
                 // Extract model metadata and update internal structures
                 if (!ExtractModelMetadata())
