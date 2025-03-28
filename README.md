@@ -22,7 +22,7 @@ AI Inference Server that takes trained AI models, load them into memory, and exe
 
 
 # Detailed Design
-For top level design diagram, see [here](./docs/design_diagram.md)
+For top level design diagram, see [here](./docs/architecture-diagram.svg)
 For documentations about key components, dataflow, and component interactions, see [here](./docs/design.md).
 
 # How to run the server in Google Colab
