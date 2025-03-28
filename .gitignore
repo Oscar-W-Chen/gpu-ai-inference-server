@@ -6,6 +6,7 @@
 
 # Go build artifacts
 /server/bin
+/server/main
 *.exe
 
 # Docker files
@@ -18,3 +19,6 @@ docker-compose.override.yml
 
 # server executable
 gpu-ai-inference-server
+
+#other installed packages
+*.tar.gz

@@ -12,14 +12,17 @@ AI Inference Server that takes trained AI models, load them into memory, and exe
 - [x] Complete the notebook such that the Google Colab runs the server directly on Go without containers
 - [x] Add to documentation under docs/
 - [x] Fully implement ModelRepository and integrate it with the code stack
-- [ ] Fully implement the model specific loading, inferencing, and unloading logic
-- [ ] Put complete model files under /model directory to test loading functions
+- [x] Fully implement the model specific loading, inferencing, and unloading logic for ONNX
+- [x] Put API.md on homepage
+- [ ] Restructure main.go to use singleton inference manager throughout the server session 
+- [ ] Remove unnecessary DEBUG messages
+- [x] Put complete model files under /model directory to test loading functions
 - [ ] Add other Go files to set up the full functioning server
 - [ ] Run full end-to-end integration test on AI inferencing on top of GPUs
 
 
 # Detailed Design
-For top level design diagram, see [here](./docs/design_diagram.md)
+For top level design diagram, see [here](./docs/architecture-diagram.svg)
 For documentations about key components, dataflow, and component interactions, see [here](./docs/design.md).
 
 # How to run the server in Google Colab

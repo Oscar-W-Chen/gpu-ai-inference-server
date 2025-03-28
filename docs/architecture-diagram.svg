@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900">
+  <!-- Main container box -->
+  <rect x="50" y="50" width="1100" height="800" fill="#f8f9fa" stroke="#333" stroke-width="3" rx="10" ry="10" />
+  <text x="600" y="100" font-family="Arial" font-size="36" text-anchor="middle" font-weight="bold">GPU Inference Server</text>
+  
+  <!-- Go Server box -->
+  <rect x="100" y="150" width="250" height="120" fill="#e1f0fa" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="225" y="210" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Go Server</text>
+  <text x="225" y="240" font-family="Arial" font-size="18" text-anchor="middle">(main.go)</text>
+  
+  <!-- Go Inference Binding box -->
+  <rect x="475" y="150" width="250" height="120" fill="#e1f0fa" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="600" y="210" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Go Inference</text>
+  <text x="600" y="240" font-family="Arial" font-size="18" text-anchor="middle">Binding</text>
+  
+  <!-- Inference Bridge box -->
+  <rect x="850" y="150" width="250" height="120" fill="#e1f0fa" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="975" y="210" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Inference</text>
+  <text x="975" y="240" font-family="Arial" font-size="18" text-anchor="middle">Bridge (C API)</text>
+  
+  <!-- HTTP/REST & GRPC APIs box -->
+  <rect x="100" y="350" width="250" height="120" fill="#ffebeb" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="225" y="405" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">HTTP/REST and</text>
+  <text x="225" y="435" font-family="Arial" font-size="18" text-anchor="middle">GRPC APIs</text>
+  
+  <!-- Inference Manager box -->
+  <rect x="850" y="350" width="250" height="120" fill="#e5faeb" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="975" y="405" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Inference</text>
+  <text x="975" y="435" font-family="Arial" font-size="18" text-anchor="middle">Manager</text>
+  
+  <!-- Model box -->
+  <rect x="475" y="550" width="250" height="120" fill="#fff2e6" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="600" y="615" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Model</text>
+  
+  <!-- CUDA Utils box -->
+  <rect x="850" y="550" width="250" height="120" fill="#e6e6ff" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="975" y="615" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">CUDA Utils</text>
+  
+  <!-- Model Backends box -->
+  <rect x="475" y="750" width="250" height="120" fill="#ffffdb" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="600" y="815" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">Model Backends</text>
+  
+  <!-- GPU Memory Management box -->
+  <rect x="850" y="750" width="250" height="120" fill="#f9ebff" stroke="#333" stroke-width="2.5" rx="8" ry="8" />
+  <text x="975" y="800" font-family="Arial" font-size="24" text-anchor="middle" font-weight="bold">GPU Memory</text>
+  <text x="975" y="830" font-family="Arial" font-size="18" text-anchor="middle">Management</text>
+  
+  <!-- Arrows -->
+  <!-- Go Server to Go Inference Binding -->
+  <line x1="350" y1="210" x2="475" y2="210" stroke="#333" stroke-width="3" />
+  <polygon points="465,200 475,210 465,220" fill="#333" />
+  <polygon points="360,200 350,210 360,220" fill="#333" />
+  
+  <!-- Go Inference Binding to Inference Bridge -->
+  <line x1="725" y1="210" x2="850" y2="210" stroke="#333" stroke-width="3" />
+  <polygon points="840,200 850,210 840,220" fill="#333" />
+  <polygon points="735,200 725,210 735,220" fill="#333" />
+  
+  <!-- Go Server to HTTP/REST -->
+  <line x1="225" y1="270" x2="225" y2="350" stroke="#333" stroke-width="3" />
+  <polygon points="215,340 225,350 235,340" fill="#333" />
+  
+  <!-- Inference Bridge to Inference Manager -->
+  <line x1="975" y1="270" x2="975" y2="350" stroke="#333" stroke-width="3" />
+  <polygon points="965,340 975,350 985,340" fill="#333" />
+  
+  <!-- Inference Manager to Model and CUDA Utils -->
+  <line x1="975" y1="470" x2="975" y2="550" stroke="#333" stroke-width="3" />
+  <polygon points="965,540 975,550 985,540" fill="#333" />
+  
+  <line x1="850" y1="440" x2="600" y2="550" stroke="#333" stroke-width="3" />
+  <polygon points="607,541 600,550 615,555" fill="#333" />
+  
+  <!-- Model to Model Backends -->
+  <line x1="600" y1="670" x2="600" y2="750" stroke="#333" stroke-width="3" />
+  <polygon points="590,740 600,750 610,740" fill="#333" />
+  
+  <!-- CUDA Utils to GPU Memory Management -->
+  <line x1="975" y1="670" x2="975" y2="750" stroke="#333" stroke-width="3" />
+  <polygon points="965,740 975,750 985,740" fill="#333" />
+</svg>

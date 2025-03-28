@@ -1,1 +1,26 @@
-ONNX model placeholder
+
+onnx-example:¿
+*
+input
+weight1matmul1matmul1"MatMul
+#
+matmul1
+bias1hiddenadd1"Add
+
+hiddenrelurelu"Relu
+)
+relu
+weight2matmul2matmul2"MatMul
+#
+matmul2
+bias2outputadd2"Add
+test_model*MBweight1J<QQ˛>(ïæÎŒ%?§Ú¬?Á≈oæô¡oæ•# ?övD?Ú^æ7Â
+?EÌæ!tÓæıƒw>^ÊÙø ‹ø*!Bbias1JÚøs§ÅøÂ†>Dthø^∆¥ø*9Bweight2J(aöª?Á1gæ:Lä=&^∂ø´\øb+„=¬Sìø~[¿>u√ø‚Xïæ*Bbias2Jr	øtÌ?Z
+input
+
+
+b
+output
+
+
+B

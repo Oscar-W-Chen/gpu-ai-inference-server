@@ -98,7 +98,7 @@ def build_inference_engine():
     run_cmd("chmod +x scripts/build_inference_engine.sh")
     
     # Run build script
-    run_cmd("./scripts/build_inference_engine.sh")
+    run_cmd("./scripts/build_inference_engine.sh --run-tests")
     
     # Verify the lib was created
     if os.path.exists("build/inference_engine/lib/libinference_engine.so"):
@@ -136,55 +136,8 @@ def build_go_server():
     else:
         print("❌ Failed to build Go server")
         return False
-'''
-def run_server():
-    """Run the server and test it"""
-    print("\n=== Running server ===")
-    
-    # Set LD_LIBRARY_PATH to find the shared library
-    os.environ["LD_LIBRARY_PATH"] = f"{os.getcwd()}/build/inference_engine/lib:{os.environ.get('LD_LIBRARY_PATH', '')}"
-    
-    # Start the server
-    server_process = subprocess.Popen("./server", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
-    print("Server started")
-    
-    # Wait for the server to start
-    time.sleep(2)
 
-    # Test the server
-    try:
-        print("\n=== Testing server API ===")
 
-        # Check if server is actually running
-        run_cmd("curl -v http://localhost:8080/health --ipv4")
-        
-        # Test health endpoint
-        response = requests.get("http://localhost:8080/health")
-        print(f"Health endpoint response: {response.status_code}")
-        print(json.dumps(response.json(), indent=2))
-        
-        # Test CUDA info endpoint
-        response = requests.get("http://localhost:8080/cuda")
-        print(f"CUDA info endpoint response: {response.status_code}")
-        cuda_info = response.json()
-        print(json.dumps(cuda_info, indent=2))
-        
-        if cuda_info.get("cuda_available", False):
-            # Test devices endpoint
-            response = requests.get("http://localhost:8080/devices")
-            print(f"Devices endpoint response: {response.status_code}")
-            print(json.dumps(response.json(), indent=2))
-    
-    except Exception as e:
-        print(f"Error testing server: {e}")
-    
-    finally:
-        # Stop the server
-        server_process.terminate()
-        server_process.wait()
-        print("Server stopped")
-    
-'''
 def main():
     """Main function"""
     print("=== GPU AI Inference Server Test ===")
