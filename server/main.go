@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -416,6 +418,324 @@ func GetModelStatus(c *gin.Context) {
 
 	c.IndentedJSON(http.StatusOK, modelStatus)
 }
+
+//The following functions are related to the actual model inferencing
+//===================================================================
+
+// RunInference handles inference requests for a model
+func RunInference(c *gin.Context) {
+	// Get model name from URL
+	modelName := c.Param("name")
+
+	// Get version from query parameter (optional)
+	version := c.Query("version")
+
+	// Check if model is loaded
+	if !inferenceManager.IsModelLoaded(modelName, version) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Model '%s' is not loaded. Please load the model first.", modelName),
+		})
+		return
+	}
+
+	// Load model configuration from config.json
+	modelConfig, err := loadModelConfig(modelName, version)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to load model configuration: %v", err),
+		})
+		return
+	}
+
+	// Parse the request body - simplified to just expect input data
+	var request struct {
+		Inputs map[string]interface{} `json:"inputs"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
+		return
+	}
+
+	if len(request.Inputs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No inputs provided"})
+		return
+	}
+
+	// Create tensor data objects based on model config and input data
+	inputs := make([]binding.TensorData, 0, len(modelConfig.Inputs))
+	for _, inputConfig := range modelConfig.Inputs {
+		// Get input data from the request
+		rawData, ok := request.Inputs[inputConfig.Name]
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Required input '%s' not provided", inputConfig.Name),
+			})
+			return
+		}
+
+		// Convert the input data to the right format based on data type - only care about float for now
+		var data interface{}
+		var dataType binding.DataType
+
+		switch inputConfig.DataType {
+		case "FLOAT32":
+			dataType = binding.DataTypeFloat32
+
+			// Try to convert input data to []float32
+			floatData, err := convertToFloat32Array(rawData)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Failed to convert input '%s' to float32 array: %v", inputConfig.Name, err),
+				})
+				return
+			}
+
+			data = floatData
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("Unsupported data type '%s' for input '%s'", inputConfig.DataType, inputConfig.Name),
+			})
+			return
+		}
+
+		// Create tensor with data and shape from config
+		tensor := binding.TensorData{
+			Name:     inputConfig.Name,
+			DataType: dataType,
+			Shape:    binding.Shape{Dims: inputConfig.Shape},
+			Data:     data,
+		}
+		inputs = append(inputs, tensor)
+	}
+
+	// Call the binding layer to run inference
+	outputs, err := inferenceManager.RunInference(modelName, version, inputs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Inference failed: %v", err),
+		})
+		return
+	}
+
+	// Convert the output tensors to a more user-friendly response
+	// that includes classification labels if available
+	responseOutputs := processOutputs(outputs, modelConfig.Outputs)
+
+	// Send the response
+	c.IndentedJSON(http.StatusOK, gin.H{
+		"model_name":    modelName,
+		"model_version": version,
+		"outputs":       responseOutputs,
+	})
+}
+
+// Model configuration structure
+type ModelConfig struct {
+	Name    string         `json:"name"`
+	Version string         `json:"version"`
+	Inputs  []InputConfig  `json:"inputs"`
+	Outputs []OutputConfig `json:"outputs"`
+}
+
+type InputConfig struct {
+	Name     string  `json:"name"`
+	Dims     []int64 `json:"dims"`
+	Shape    []int64 `json:"shape"`
+	DataType string  `json:"data_type"`
+}
+
+type OutputConfig struct {
+	Name          string  `json:"name"`
+	Dims          []int64 `json:"dims"`
+	Shape         []int64 `json:"shape"`
+	DataType      string  `json:"data_type"`
+	LabelFilename string  `json:"label_filename,omitempty"`
+}
+
+// Load model configuration from config.json
+func loadModelConfig(modelName, version string) (*ModelConfig, error) {
+	modelPath := filepath.Join(ModelRepositoryPath, modelName)
+
+	// If version is provided, use it, otherwise find the latest
+	if version != "" {
+		modelPath = filepath.Join(modelPath, version)
+	} else {
+		// Find the latest version
+		entries, err := os.ReadDir(modelPath)
+		if err != nil {
+			return nil, err
+		}
+
+		var versions []string
+		for _, entry := range entries {
+			if entry.IsDir() && isNumeric(entry.Name()) {
+				versions = append(versions, entry.Name())
+			}
+		}
+
+		if len(versions) == 0 {
+			return nil, fmt.Errorf("no version directories found for model '%s'", modelName)
+		}
+
+		sort.Strings(versions)
+		latestVersion := versions[len(versions)-1]
+		modelPath = filepath.Join(modelPath, latestVersion)
+	}
+
+	// Read config.json
+	configPath := filepath.Join(modelPath, "config.json")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the config.json
+	var config ModelConfig
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// Process output tensors and include classification labels if available
+func processOutputs(outputs []binding.TensorData, outputConfigs []OutputConfig) []map[string]interface{} {
+	responseOutputs := make([]map[string]interface{}, 0, len(outputs))
+
+	// Create a map of output name to output config
+	outputConfigMap := make(map[string]OutputConfig)
+	for _, config := range outputConfigs {
+		outputConfigMap[config.Name] = config
+	}
+
+	for _, output := range outputs {
+		outputMap := map[string]interface{}{
+			"name":      output.Name,
+			"data_type": output.DataType,
+			"shape":     output.Shape.Dims,
+			"data":      output.Data,
+		}
+
+		// If this output has labels, try to load them
+		if config, ok := outputConfigMap[output.Name]; ok && config.LabelFilename != "" {
+			// Try to load labels file
+			labels, err := loadLabelFile(output.Name, config.LabelFilename)
+			if err == nil && len(labels) > 0 {
+				// If we have labels, add top classification results
+				if floatData, ok := output.Data.([]float32); ok {
+					// Find top classes
+					topClasses := findTopClasses(floatData, labels, 5)
+					outputMap["classifications"] = topClasses
+				}
+			}
+		}
+
+		responseOutputs = append(responseOutputs, outputMap)
+	}
+
+	return responseOutputs
+}
+
+// Load label file for classification outputs
+func loadLabelFile(outputName, labelFilename string) ([]string, error) {
+	// Try to find the label file in the model directory
+	labelPath := filepath.Join(ModelRepositoryPath, labelFilename)
+
+	// Read the label file
+	labelData, err := os.ReadFile(labelPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the labels (one per line)
+	labels := strings.Split(string(labelData), "\n")
+
+	// Trim whitespace and remove empty lines
+	var cleanLabels []string
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label != "" {
+			cleanLabels = append(cleanLabels, label)
+		}
+	}
+
+	return cleanLabels, nil
+}
+
+// Find top N classes from classification results
+func findTopClasses(probabilities []float32, labels []string, topN int) []map[string]interface{} {
+	// Create pairs of (index, probability)
+	type indexProb struct {
+		Index int
+		Prob  float32
+	}
+
+	pairs := make([]indexProb, 0, len(probabilities))
+	for i, prob := range probabilities {
+		pairs = append(pairs, indexProb{Index: i, Prob: prob})
+	}
+
+	// Sort by probability (descending)
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].Prob > pairs[j].Prob
+	})
+
+	// Take top N
+	if topN > len(pairs) {
+		topN = len(pairs)
+	}
+
+	// Convert to output format
+	results := make([]map[string]interface{}, 0, topN)
+	for i := 0; i < topN; i++ {
+		index := pairs[i].Index
+		prob := pairs[i].Prob
+
+		result := map[string]interface{}{
+			"index":       index,
+			"probability": prob,
+		}
+
+		// Add label if available
+		if index < len(labels) {
+			result["label"] = labels[index]
+		}
+
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// Helper function to check if a string is numeric
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// Helper functions to convert input data
+// Convert interface{} to []float32
+func convertToFloat32Array(data interface{}) ([]float32, error) {
+	// Marshal and unmarshal to convert various number formats to float32
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	var floatArray []float32
+	if err := json.Unmarshal(jsonData, &floatArray); err != nil {
+		return nil, err
+	}
+
+	return floatArray, nil
+}
+
+//===========================================================
 
 // creates a singleton inference manager
 func InitializeInferenceManager() error {

@@ -9,6 +9,7 @@ package binding
 import "C"
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"unsafe"
 )
@@ -278,6 +279,33 @@ func (im *InferenceManager) ListModels() []string {
 	}
 
 	return models
+}
+
+// RunInference executes inference using a loaded model
+func (im *InferenceManager) RunInference(modelName string, version string, inputs []TensorData) ([]TensorData, error) {
+	if im.handle == nil {
+		return nil, errors.New("inference manager not initialized")
+	}
+
+	// Check if model is loaded
+	if !im.IsModelLoaded(modelName, version) {
+		return nil, fmt.Errorf("model '%s' is not loaded", modelName)
+	}
+
+	// Create a new model instance for this inference
+	model, err := CreateModel(modelName, ModelType(0), ModelConfig{}, DeviceType(0), 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create model handle: %v", err)
+	}
+	defer model.Destroy() // Clean up after use
+
+	// Load the model (which should be quick if it's already loaded in the manager)
+	if err := model.Load(); err != nil {
+		return nil, fmt.Errorf("failed to load model: %v", err)
+	}
+
+	// Run inference using the existing Infer method
+	return model.Infer(inputs)
 }
 
 // Model functions
