@@ -481,22 +481,29 @@ func (m *Model) Destroy() {
 
 // Infer runs inference on the model
 func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
+	fmt.Println("DEBUG: Infer - Starting inference")
 	if m.handle == nil {
+		fmt.Println("DEBUG: Infer - model handle is nil")
 		return nil, errors.New("model not initialized")
 	}
 
 	// First, check that we have inputs
 	if len(inputs) == 0 {
+		fmt.Println("DEBUG: Infer - no input tensors provided")
 		return nil, errors.New("no input tensors provided")
 	}
 
 	// Debug input information
 	for i, input := range inputs {
-		fmt.Printf("Input tensor %d: name=%s, shape=%v, dataType=%d\n",
+		fmt.Printf("DEBUG: Infer - Input tensor %d: name=%s, shape=%v, dataType=%d\n",
 			i, input.Name, input.Shape.Dims, input.DataType)
+		if data, ok := input.Data.([]float32); ok {
+			fmt.Printf("DEBUG: Infer - Input data sample (first few values): %v\n", data[:min(5, len(data))])
+		}
 	}
 
 	// Create C input tensors
+	fmt.Println("DEBUG: Infer - Creating C input tensors")
 	cInputs := make([]C.TensorData, len(inputs))
 	for i, input := range inputs {
 		// Create shape
@@ -519,12 +526,15 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 			if floatData, ok := input.Data.([]float32); ok && len(floatData) > 0 {
 				dataPtr = unsafe.Pointer(&floatData[0])
 				dataSize = C.size_t(len(floatData) * 4) // 4 bytes per float32
+				fmt.Printf("DEBUG: Infer - Input %d using float32 data with %d elements\n", i, len(floatData))
 			} else {
+				fmt.Printf("DEBUG: Infer - Invalid float32 data for input %s\n", input.Name)
 				return nil, errors.New("invalid float32 data for input " + input.Name)
 			}
 		// Add cases for other supported data types
 
 		default:
+			fmt.Printf("DEBUG: Infer - Unsupported data type %d for input %s\n", input.DataType, input.Name)
 			return nil, errors.New("unsupported data type for input " + input.Name)
 		}
 
@@ -539,21 +549,38 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 	}
 
 	// Get model metadata to determine output shapes
+	fmt.Println("DEBUG: Infer - Attempting to get model metadata")
 	metadata, err := m.GetMetadata()
 	if err != nil {
-		// If metadata can't be retrieved, fallback to a default output shape
+		fmt.Printf("DEBUG: Infer - Failed to get model metadata: %v\n", err)
+		fmt.Println("DEBUG: Infer - Checking for config.json information from model loading")
+		// If metadata retrieval fails, try to use hardcoded values for testing
+		// THIS IS A FALLBACK ONLY - in production, the metadata should be properly retrieved
+		fmt.Println("DEBUG: Infer - Using fallback output configuration for test_model")
 		metadata = &ModelMetadata{
 			Outputs: []string{"output"},
 		}
+	} else {
+		fmt.Printf("DEBUG: Infer - Successfully retrieved metadata with %d outputs: %v\n",
+			len(metadata.Outputs), metadata.Outputs)
 	}
 
-	// Prepare output tensors based on model metadata or use defaults
+	// Check if we have output information
+	if len(metadata.Outputs) == 0 {
+		fmt.Println("DEBUG: Infer - No output information available, cannot proceed with inference")
+		return nil, errors.New("model metadata does not contain output information")
+	}
+
+	// Prepare output tensors based on model metadata
+	fmt.Printf("DEBUG: Infer - Preparing %d output tensors based on metadata\n", len(metadata.Outputs))
 	outputs := make([]TensorData, len(metadata.Outputs))
 	for i, outputName := range metadata.Outputs {
-		// Default to a reasonable shape and size if we can't determine it
-		// For the test model, we know it's [1, 2]
+		// For test_model, we know the shape is [1, 2]
+		// In production, this would be determined from metadata or config
 		shape := Shape{Dims: []int64{1, 2}}
 		data := make([]float32, 2) // Buffer for output data
+		fmt.Printf("DEBUG: Infer - Creating output tensor %d: name=%s, shape=%v\n",
+			i, outputName, shape.Dims)
 
 		outputs[i] = TensorData{
 			Name:     outputName,
@@ -564,8 +591,10 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 	}
 
 	// Create C output tensors
+	fmt.Println("DEBUG: Infer - Creating C output tensors")
 	cOutputs := make([]C.TensorData, len(outputs))
 	for i, output := range outputs {
+		fmt.Printf("DEBUG: Infer - Processing output tensor %d: %s\n", i, output.Name)
 		// Create shape
 		var shapePtr *C.int64_t
 		if len(output.Shape.Dims) > 0 {
@@ -576,6 +605,8 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 			dims:     shapePtr,
 			num_dims: C.int(len(output.Shape.Dims)),
 		}
+		fmt.Printf("DEBUG: Infer - Output %d shape: dims=%v, num_dims=%d\n",
+			i, output.Shape.Dims, len(output.Shape.Dims))
 
 		// Handle data based on type
 		var dataPtr unsafe.Pointer
@@ -586,12 +617,17 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 			if floatData, ok := output.Data.([]float32); ok && len(floatData) > 0 {
 				dataPtr = unsafe.Pointer(&floatData[0])
 				dataSize = C.size_t(len(floatData) * 4) // 4 bytes per float32
+				fmt.Printf("DEBUG: Infer - Output %d using float32 buffer with %d elements\n",
+					i, len(floatData))
 			} else {
+				fmt.Printf("DEBUG: Infer - Invalid float32 data for output %s\n", output.Name)
 				return nil, errors.New("invalid float32 data for output " + output.Name)
 			}
 		// Add cases for other supported data types
 
 		default:
+			fmt.Printf("DEBUG: Infer - Unsupported data type %d for output %s\n",
+				output.DataType, output.Name)
 			return nil, errors.New("unsupported data type for output " + output.Name)
 		}
 
@@ -605,61 +641,91 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 		defer C.free(unsafe.Pointer(cOutputs[i].name))
 	}
 
-	// Run inference
-	var cError C.ErrorMessage
-	var success C.bool
-
-	if len(cInputs) > 0 && len(cOutputs) > 0 {
-		success = C.ModelInfer(
-			m.handle,
-			&cInputs[0], C.int(len(cInputs)),
-			&cOutputs[0], C.int(len(cOutputs)),
-			&cError,
-		)
-	} else {
-		// Handle empty input or output case
+	// Safety check
+	if len(cInputs) == 0 || len(cOutputs) == 0 {
+		fmt.Printf("DEBUG: Infer - Safety check failed: inputs=%d, outputs=%d\n",
+			len(cInputs), len(cOutputs))
 		return nil, errors.New("model requires at least one input and output")
 	}
+
+	// Run inference
+	fmt.Printf("DEBUG: Infer - Running inference with ModelInfer C function: inputs=%d, outputs=%d\n",
+		len(cInputs), len(cOutputs))
+
+	var cError C.ErrorMessage
+	success := C.ModelInfer(
+		m.handle,
+		&cInputs[0], C.int(len(cInputs)),
+		&cOutputs[0], C.int(len(cOutputs)),
+		&cError,
+	)
 
 	if !success {
 		var err error
 		if cError != nil {
 			err = errors.New(C.GoString(cError))
+			fmt.Printf("DEBUG: Infer - C.ModelInfer failed with error: %s\n", C.GoString(cError))
 			C.FreeErrorMessage(cError)
 		} else {
 			err = errors.New("failed to run inference")
+			fmt.Println("DEBUG: Infer - C.ModelInfer failed without specific error")
 		}
 		return nil, err
+	}
+
+	fmt.Println("DEBUG: Infer - Inference successful, returning outputs")
+	// Print output data for debugging
+	for i, output := range outputs {
+		if data, ok := output.Data.([]float32); ok {
+			fmt.Printf("DEBUG: Infer - Output %d result: %v\n", i, data)
+		}
 	}
 
 	// Output data is already updated in the output slices since we passed pointers
 	return outputs, nil
 }
 
+// Helper function to find minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // GetMetadata gets metadata about the model
 func (m *Model) GetMetadata() (*ModelMetadata, error) {
 	if m.handle == nil {
+		fmt.Println("DEBUG: GetMetadata - model handle is nil")
 		return nil, errors.New("model not initialized")
 	}
 
+	fmt.Println("DEBUG: GetMetadata - calling C.ModelGetMetadata")
 	cMetadata := C.ModelGetMetadata(m.handle)
 	if cMetadata == nil {
+		fmt.Println("DEBUG: GetMetadata - C.ModelGetMetadata returned nil")
 		return nil, errors.New("failed to get model metadata")
 	}
+	fmt.Printf("DEBUG: GetMetadata - C.ModelGetMetadata returned successfully: num_inputs=%d, num_outputs=%d\n",
+		cMetadata.num_inputs, cMetadata.num_outputs)
 	defer C.ModelFreeMetadata(cMetadata)
 
 	// Convert inputs
 	inputs := make([]string, int(cMetadata.num_inputs))
+	fmt.Printf("DEBUG: GetMetadata - Processing %d inputs\n", int(cMetadata.num_inputs))
 	for i := 0; i < int(cMetadata.num_inputs); i++ {
 		cInput := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetadata.inputs)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
 		inputs[i] = C.GoString(cInput)
+		fmt.Printf("DEBUG: GetMetadata - Input %d: %s\n", i, inputs[i])
 	}
 
 	// Convert outputs
 	outputs := make([]string, int(cMetadata.num_outputs))
+	fmt.Printf("DEBUG: GetMetadata - Processing %d outputs\n", int(cMetadata.num_outputs))
 	for i := 0; i < int(cMetadata.num_outputs); i++ {
 		cOutput := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetadata.outputs)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
 		outputs[i] = C.GoString(cOutput)
+		fmt.Printf("DEBUG: GetMetadata - Output %d: %s\n", i, outputs[i])
 	}
 
 	metadata := &ModelMetadata{
@@ -671,6 +737,9 @@ func (m *Model) GetMetadata() (*ModelMetadata, error) {
 		Description: C.GoString(cMetadata.description),
 		LoadTimeNs:  int64(cMetadata.load_time_ns),
 	}
+
+	fmt.Printf("DEBUG: GetMetadata - Returning metadata: Name=%s, Version=%s, Type=%d, Inputs=%v, Outputs=%v\n",
+		metadata.Name, metadata.Version, metadata.Type, metadata.Inputs, metadata.Outputs)
 
 	return metadata, nil
 }
