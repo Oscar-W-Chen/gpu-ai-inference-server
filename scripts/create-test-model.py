@@ -34,7 +34,8 @@ def create_test_model(output_dir):
     weight2_tensor = numpy_helper.from_array(weight2, name="weight2")
     bias2_tensor = numpy_helper.from_array(bias2, name="bias2")
     
-    # Create input and output tensors
+    # Create input and output tensors with clear names
+    # The key is to match these names exactly with what's expected in the inference code
     input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, input_shape)
     hidden_tensor = helper.make_tensor_value_info("hidden", TensorProto.FLOAT, [1, hidden_size])
     relu_tensor = helper.make_tensor_value_info("relu", TensorProto.FLOAT, [1, hidden_size])
@@ -79,17 +80,18 @@ def create_test_model(output_dir):
         name="add2"
     )
     
-    # Create the graph
+    # Create the graph with clear and explicit IO definitions
     graph = helper.make_graph(
         [node1, node2, node3, node4, node5],  # Nodes
         "test_model",  # Graph name
-        [input_tensor],  # Inputs
-        [output_tensor],  # Outputs
+        [input_tensor],  # Inputs - clearly defined single input
+        [output_tensor],  # Outputs - clearly defined single output
         [weight1_tensor, bias1_tensor, weight2_tensor, bias2_tensor]  # Initializers
     )
     
-    # Create the model
-    model = helper.make_model(graph, producer_name="onnx-example")
+    # Add model metadata to make identification easier
+    model = helper.make_model(graph, producer_name="GPU-AI-Inference-Server")
+    model.doc_string = "Test model for inference server with 3 inputs and 2 outputs"
     model.opset_import[0].version = 12
     
     # Save the model
@@ -97,7 +99,7 @@ def create_test_model(output_dir):
     onnx.save(model, model_path)
     print(f"Saved ONNX model to {model_path}")
     
-    # Create config.json
+    # Create config.json with explicit IO definitions that match the model
     config = {
         "name": "test_model",
         "version": "1",
@@ -124,7 +126,7 @@ def create_test_model(output_dir):
         json.dump(config, f, indent=2)
     print(f"Saved config.json to {config_path}")
     
-    # Test the model with random input
+    # Test the model with random input to verify it works
     print("Testing the model with ONNX Runtime...")
     test_input = np.random.randn(1, 3).astype(np.float32)
     
