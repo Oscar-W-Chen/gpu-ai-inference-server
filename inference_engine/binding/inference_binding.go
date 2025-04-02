@@ -485,6 +485,17 @@ func (m *Model) Infer(inputs []TensorData) ([]TensorData, error) {
 		return nil, errors.New("model not initialized")
 	}
 
+	// First, check that we have inputs
+	if len(inputs) == 0 {
+		return nil, errors.New("no input tensors provided")
+	}
+
+	// Debug input information
+	for i, input := range inputs {
+		fmt.Printf("Input tensor %d: name=%s, shape=%v, dataType=%d\n",
+			i, input.Name, input.Shape.Dims, input.DataType)
+	}
+
 	// Create C input tensors
 	cInputs := make([]C.TensorData, len(inputs))
 	for i, input := range inputs {
