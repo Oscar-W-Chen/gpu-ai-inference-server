@@ -353,6 +353,7 @@ func UnloadModel(c *gin.Context) {
 }
 
 // GetModelStatus gets detailed status information about a specific model
+// GetModelStatus gets detailed status information about a specific model
 func GetModelStatus(c *gin.Context) {
 	// Get model name from URL
 	modelName := c.Param("name")
@@ -407,13 +408,28 @@ func GetModelStatus(c *gin.Context) {
 
 	isLoaded := inferenceManager.IsModelLoaded(modelName, versionToCheck)
 
-	// Build model status
+	// Load model configuration from config.json
+	var modelConfig *ModelConfig
+	if versionToCheck != "" {
+		modelConfig, err = loadModelConfig(modelName, versionToCheck)
+		// If error, just log it but continue (config data will be nil)
+		if err != nil {
+			log.Printf("Warning: Could not load config for model %s: %v", modelName, err)
+		}
+	}
+
+	// Build model status with configuration info if available
 	modelStatus := gin.H{
 		"name":               modelName,
 		"version":            versionToCheck,
 		"is_loaded":          isLoaded,
 		"repository_path":    filepath.Join(ModelRepositoryPath, modelName),
 		"available_versions": versions,
+	}
+
+	// Add configuration data if we successfully loaded it
+	if modelConfig != nil {
+		modelStatus["config"] = modelConfig
 	}
 
 	c.IndentedJSON(http.StatusOK, modelStatus)
@@ -805,6 +821,7 @@ func run(ctx context.Context) error {
 	router.POST("/models/:name/load", LoadModel)
 	router.POST("/models/:name/unload", UnloadModel)
 	router.GET("/models/:name", GetModelStatus)
+	router.POST("/models/:name/infer", RunInference)
 
 	if cudaAvailable {
 		router.GET("/devices", getDevices(cudaAvailable, deviceCount))
