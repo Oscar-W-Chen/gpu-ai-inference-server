@@ -439,7 +439,6 @@ func GetModelStatus(c *gin.Context) {
 //===================================================================
 
 // RunInference handles inference requests for a model
-// RunInference handles inference requests for a model
 func RunInference(c *gin.Context) {
 	// Get model name from URL
 	modelName := c.Param("name")

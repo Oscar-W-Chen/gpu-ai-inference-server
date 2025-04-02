@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync"
 	"unsafe"
 )
 
@@ -96,11 +97,16 @@ type ModelStats struct {
 // InferenceManager handles model management
 type InferenceManager struct {
 	handle C.InferenceManagerHandle
+	// Track loaded models with a map
+	loadedModels      map[string]*Model
+	loadedModelsMutex sync.RWMutex
 }
 
 // Model represents a loaded model
 type Model struct {
-	handle C.ModelHandle
+	handle  C.ModelHandle
+	name    string
+	version string
 }
 
 // Tensor represents a tensor for inference
@@ -129,6 +135,7 @@ func GetDeviceCount() int {
 // GetDeviceInfo returns information about a CUDA device
 func GetDeviceInfo(deviceID int) string {
 	cInfo := C.GetDeviceInfo(C.int(deviceID))
+	defer C.free(unsafe.Pointer(cInfo))
 	return C.GoString(cInfo)
 }
 
@@ -166,17 +173,40 @@ func NewInferenceManager(modelRepositoryPath string) (*InferenceManager, error) 
 		return nil, errors.New("failed to initialize inference manager")
 	}
 
-	manager := &InferenceManager{handle: handle}
+	manager := &InferenceManager{
+		handle:       handle,
+		loadedModels: make(map[string]*Model),
+	}
 	runtime.SetFinalizer(manager, (*InferenceManager).Shutdown)
 	return manager, nil
 }
 
 // Shutdown shuts down the inference manager
 func (im *InferenceManager) Shutdown() {
+	im.loadedModelsMutex.Lock()
+	defer im.loadedModelsMutex.Unlock()
+
+	// Clean up any loaded models
+	for _, model := range im.loadedModels {
+		if model.handle != nil {
+			C.ModelDestroy(model.handle)
+		}
+	}
+	im.loadedModels = nil
+
+	// Shutdown the inference manager
 	if im.handle != nil {
 		C.InferenceShutdown(im.handle)
 		im.handle = nil
 	}
+}
+
+// getModelKey creates a consistent key for the model map
+func getModelKey(modelName, version string) string {
+	if version == "" {
+		return modelName
+	}
+	return fmt.Sprintf("%s:%s", modelName, version)
 }
 
 // LoadModel loads a model into the inference server
@@ -207,6 +237,26 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 		return err
 	}
 
+	// After successful loading, create a Model instance and add to our map
+	modelKey := getModelKey(modelName, version)
+
+	// Create model config to use for creating the model
+	config := ModelConfig{
+		Name:    modelName,
+		Version: version,
+	}
+
+	// Create the model
+	model, err := createModelInternal(modelName, config, DeviceGPU, 0)
+	if err != nil {
+		return fmt.Errorf("model loaded in server but failed to create local handle: %v", err)
+	}
+
+	// Store it in our map
+	im.loadedModelsMutex.Lock()
+	im.loadedModels[modelKey] = model
+	im.loadedModelsMutex.Unlock()
+
 	return nil
 }
 
@@ -236,6 +286,19 @@ func (im *InferenceManager) UnloadModel(modelName, version string) error {
 			err = errors.New("failed to unload model")
 		}
 		return err
+	}
+
+	// Remove from our loaded models map
+	modelKey := getModelKey(modelName, version)
+
+	im.loadedModelsMutex.Lock()
+	defer im.loadedModelsMutex.Unlock()
+
+	if model, exists := im.loadedModels[modelKey]; exists {
+		if model.handle != nil {
+			C.ModelDestroy(model.handle)
+		}
+		delete(im.loadedModels, modelKey)
 	}
 
 	return nil
@@ -281,37 +344,67 @@ func (im *InferenceManager) ListModels() []string {
 	return models
 }
 
+// GetModel gets a reference to an already loaded model
+func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) {
+	if im.handle == nil {
+		return nil, errors.New("inference manager not initialized")
+	}
+
+	// Check if the model is loaded in the server
+	if !im.IsModelLoaded(modelName, version) {
+		return nil, fmt.Errorf("model '%s:%s' is not loaded", modelName, version)
+	}
+
+	// Lookup in our local map
+	modelKey := getModelKey(modelName, version)
+
+	im.loadedModelsMutex.RLock()
+	model, exists := im.loadedModels[modelKey]
+	im.loadedModelsMutex.RUnlock()
+
+	if !exists {
+		// If we don't have it in our map but it's loaded in the server,
+		// create a new local model handle and add it to our map
+		config := ModelConfig{
+			Name:    modelName,
+			Version: version,
+		}
+
+		var err error
+		model, err = createModelInternal(modelName, config, DeviceGPU, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get handle for loaded model: %v", err)
+		}
+
+		// Add to our map
+		im.loadedModelsMutex.Lock()
+		im.loadedModels[modelKey] = model
+		im.loadedModelsMutex.Unlock()
+	}
+
+	return model, nil
+}
+
 // RunInference executes inference using a loaded model
 func (im *InferenceManager) RunInference(modelName string, version string, inputs []TensorData) ([]TensorData, error) {
 	if im.handle == nil {
 		return nil, errors.New("inference manager not initialized")
 	}
 
-	// Check if model is loaded
-	if !im.IsModelLoaded(modelName, version) {
-		return nil, fmt.Errorf("model '%s' is not loaded", modelName)
-	}
-
-	// Create a new model instance for this inference
-	model, err := CreateModel(modelName, ModelType(0), ModelConfig{}, DeviceType(0), 0)
+	// Get reference to the already loaded model
+	model, err := im.GetModel(modelName, version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create model handle: %v", err)
-	}
-	defer model.Destroy() // Clean up after use
-
-	// Load the model (which should be quick if it's already loaded in the manager)
-	if err := model.Load(); err != nil {
-		return nil, fmt.Errorf("failed to load model: %v", err)
+		return nil, fmt.Errorf("failed to get model for inference: %v", err)
 	}
 
-	// Run inference using the existing Infer method
+	// Run inference using the existing model
 	return model.Infer(inputs)
 }
 
 // Model functions
 
-// CreateModel creates a new model instance
-func CreateModel(modelPath string, modelType ModelType, config ModelConfig, deviceType DeviceType, deviceID int) (*Model, error) {
+// createModelInternal creates a model handle for an already loaded model
+func createModelInternal(modelPath string, config ModelConfig, deviceType DeviceType, deviceID int) (*Model, error) {
 	cModelPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cModelPath))
 
@@ -346,7 +439,7 @@ func CreateModel(modelPath string, modelType ModelType, config ModelConfig, devi
 	defer C.free(unsafe.Pointer(cConfig.version))
 
 	var cError C.ErrorMessage
-	handle := C.ModelCreate(cModelPath, C.ModelType(modelType), &cConfig, C.DeviceType(deviceType), C.int(deviceID), &cError)
+	handle := C.ModelCreate(cModelPath, C.ModelType(config.Type), &cConfig, C.DeviceType(deviceType), C.int(deviceID), &cError)
 	if handle == nil {
 		var err error
 		if cError != nil {
@@ -358,8 +451,11 @@ func CreateModel(modelPath string, modelType ModelType, config ModelConfig, devi
 		return nil, err
 	}
 
-	model := &Model{handle: handle}
-	runtime.SetFinalizer(model, (*Model).Destroy)
+	model := &Model{
+		handle:  handle,
+		name:    config.Name,
+		version: config.Version,
+	}
 	return model, nil
 }
 
@@ -369,59 +465,6 @@ func (m *Model) Destroy() {
 		C.ModelDestroy(m.handle)
 		m.handle = nil
 	}
-}
-
-// Load loads the model into memory
-func (m *Model) Load() error {
-	if m.handle == nil {
-		return errors.New("model not initialized")
-	}
-
-	var cError C.ErrorMessage
-	success := C.ModelLoad(m.handle, &cError)
-	if !success {
-		var err error
-		if cError != nil {
-			err = errors.New(C.GoString(cError))
-			C.FreeErrorMessage(cError)
-		} else {
-			err = errors.New("failed to load model")
-		}
-		return err
-	}
-
-	return nil
-}
-
-// Unload unloads the model from memory
-func (m *Model) Unload() error {
-	if m.handle == nil {
-		return errors.New("model not initialized")
-	}
-
-	var cError C.ErrorMessage
-	success := C.ModelUnload(m.handle, &cError)
-	if !success {
-		var err error
-		if cError != nil {
-			err = errors.New(C.GoString(cError))
-			C.FreeErrorMessage(cError)
-		} else {
-			err = errors.New("failed to unload model")
-		}
-		return err
-	}
-
-	return nil
-}
-
-// IsLoaded checks if the model is loaded
-func (m *Model) IsLoaded() bool {
-	if m.handle == nil {
-		return false
-	}
-
-	return bool(C.ModelIsLoaded(m.handle))
 }
 
 // Infer runs inference on the model
@@ -602,5 +645,3 @@ func (m *Model) GetStats() (*ModelStats, error) {
 
 	return stats, nil
 }
-
-// Tensor functions - implement as needed for more advanced use cases
