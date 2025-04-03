@@ -505,13 +505,35 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 			i, input.Name, input.Shape.Dims, input.DataType)
 	}
 
+	// Debug output configuration
+	fmt.Println("Output configurations:")
+	for i, outConfig := range outputConfigs {
+		fmt.Printf("Output %d: name=%s, shape=%v, dataType=%s\n",
+			i, outConfig.Name, outConfig.Shape, outConfig.DataType)
+	}
+
 	// Create C input tensors
 	cInputs := make([]C.TensorData, len(inputs))
+
+	// Important: Create a slice to hold all our C strings that need to be freed
+	// This ensures they stay in memory until we're done with them
+	cStringsToFree := make([]*C.char, 0)
+	defer func() {
+		for _, str := range cStringsToFree {
+			C.free(unsafe.Pointer(str))
+		}
+	}()
+
 	for i, input := range inputs {
 		// Create shape
 		var shapePtr *C.int64_t
+		var shapeCopy []int64
+
 		if len(input.Shape.Dims) > 0 {
-			shapePtr = (*C.int64_t)(unsafe.Pointer(&input.Shape.Dims[0]))
+			// Create a copy of the shape slice to ensure memory safety
+			shapeCopy = make([]int64, len(input.Shape.Dims))
+			copy(shapeCopy, input.Shape.Dims)
+			shapePtr = (*C.int64_t)(unsafe.Pointer(&shapeCopy[0]))
 		}
 
 		shape := C.Shape{
@@ -526,8 +548,11 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		switch input.DataType {
 		case DataTypeFloat32:
 			if floatData, ok := input.Data.([]float32); ok && len(floatData) > 0 {
-				dataPtr = unsafe.Pointer(&floatData[0])
-				dataSize = C.size_t(len(floatData) * 4) // 4 bytes per float32
+				// Create a copy of the float data to ensure memory safety
+				dataCopy := make([]float32, len(floatData))
+				copy(dataCopy, floatData)
+				dataPtr = unsafe.Pointer(&dataCopy[0])
+				dataSize = C.size_t(len(dataCopy) * 4) // 4 bytes per float32
 			} else {
 				return nil, errors.New("invalid float32 data for input " + input.Name)
 			}
@@ -537,14 +562,17 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 			return nil, errors.New("unsupported data type for input " + input.Name)
 		}
 
+		// Create a C string from Go string
+		nameC := C.CString(input.Name)
+		cStringsToFree = append(cStringsToFree, nameC)
+
 		cInputs[i] = C.TensorData{
-			name:      C.CString(input.Name),
+			name:      nameC,
 			data_type: C.DataType(input.DataType),
 			shape:     shape,
 			data:      dataPtr,
 			data_size: dataSize,
 		}
-		defer C.free(unsafe.Pointer(cInputs[i].name))
 	}
 
 	// Create output tensors based on provided output configurations
@@ -573,6 +601,7 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 				elements *= dim
 			}
 			outputData = make([]float32, elements)
+			fmt.Printf("Created output buffer for '%s' with %d elements\n", outConfig.Name, elements)
 		// Add cases for other supported data types
 		default:
 			return nil, fmt.Errorf("unsupported data type '%s' for output '%s'", outConfig.DataType, outConfig.Name)
@@ -589,10 +618,14 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 	// Create C output tensors
 	cOutputs := make([]C.TensorData, len(outputs))
 	for i, output := range outputs {
-		// Create shape
+		// Create shape - make a copy for safety
 		var shapePtr *C.int64_t
+		var shapeCopy []int64
+
 		if len(output.Shape.Dims) > 0 {
-			shapePtr = (*C.int64_t)(unsafe.Pointer(&output.Shape.Dims[0]))
+			shapeCopy = make([]int64, len(output.Shape.Dims))
+			copy(shapeCopy, output.Shape.Dims)
+			shapePtr = (*C.int64_t)(unsafe.Pointer(&shapeCopy[0]))
 		}
 
 		shape := C.Shape{
@@ -607,6 +640,7 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		switch output.DataType {
 		case DataTypeFloat32:
 			if floatData, ok := output.Data.([]float32); ok && len(floatData) > 0 {
+				// For output, we need to pass the actual slice since we need to get results back
 				dataPtr = unsafe.Pointer(&floatData[0])
 				dataSize = C.size_t(len(floatData) * 4) // 4 bytes per float32
 			} else {
@@ -618,30 +652,48 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 			return nil, errors.New("unsupported data type for output " + output.Name)
 		}
 
+		// Create a C string from Go string
+		nameC := C.CString(output.Name)
+		cStringsToFree = append(cStringsToFree, nameC)
+
 		cOutputs[i] = C.TensorData{
-			name:      C.CString(output.Name),
+			name:      nameC,
 			data_type: C.DataType(output.DataType),
 			shape:     shape,
 			data:      dataPtr,
 			data_size: dataSize,
 		}
-		defer C.free(unsafe.Pointer(cOutputs[i].name))
 	}
 
-	// Run inference
+	// Run inference using a separate function to avoid CGO pointer issues
+	result, err := runModelInfer(m.handle, cInputs, cOutputs)
+	if err != nil {
+		return nil, err
+	}
+
+	if !result {
+		return nil, errors.New("failed to run inference")
+	}
+
+	// Output data is already updated in the output slices since we passed pointers
+	return outputs, nil
+}
+
+// Helper function to safely call C function
+func runModelInfer(handle C.ModelHandle, inputs []C.TensorData, outputs []C.TensorData) (bool, error) {
 	var cError C.ErrorMessage
 	var success C.bool
 
-	if len(cInputs) > 0 && len(cOutputs) > 0 {
+	if len(inputs) > 0 && len(outputs) > 0 {
 		success = C.ModelInfer(
-			m.handle,
-			&cInputs[0], C.int(len(cInputs)),
-			&cOutputs[0], C.int(len(cOutputs)),
+			handle,
+			&inputs[0], C.int(len(inputs)),
+			&outputs[0], C.int(len(outputs)),
 			&cError,
 		)
 	} else {
 		// Handle empty input or output case
-		return nil, errors.New("model requires at least one input and output")
+		return false, errors.New("model requires at least one input and output")
 	}
 
 	if !success {
@@ -652,19 +704,10 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		} else {
 			err = errors.New("failed to run inference")
 		}
-		return nil, err
+		return false, err
 	}
 
-	// Output data is already updated in the output slices since we passed pointers
-	return outputs, nil
-}
-
-// Helper function to find minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return bool(success), nil
 }
 
 // GetMetadata gets metadata about the model
