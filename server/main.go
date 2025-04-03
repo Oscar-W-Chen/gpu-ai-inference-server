@@ -447,7 +447,7 @@ func RunInference(c *gin.Context) {
 	modelConfig, err := loadModelConfig(modelName, version)
 	if err != nil {
 		log.Printf("Failed to load model configuration: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to load model configuration: %v", err),
 		})
 		return
@@ -464,7 +464,7 @@ func RunInference(c *gin.Context) {
 	if !inferenceManager.IsModelLoaded(modelName, version) {
 		msg := fmt.Sprintf("Model '%s' is not loaded. Please load the model first.", modelName)
 		log.Print(msg)
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
 			"error": msg,
 		})
 		return
@@ -478,14 +478,14 @@ func RunInference(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Invalid request format: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
 		return
 	}
 
 	log.Printf("Received inputs: %+v", request.Inputs)
 	if len(request.Inputs) == 0 {
 		log.Print("No inputs provided in request")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No inputs provided"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "No inputs provided"})
 		return
 	}
 
@@ -495,7 +495,7 @@ func RunInference(c *gin.Context) {
 		rawData, ok := request.Inputs[inputConfig.Name]
 		if !ok {
 			log.Printf("Required input '%s' not provided", inputConfig.Name)
-			c.JSON(http.StatusBadRequest, gin.H{
+			c.IndentedJSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Required input '%s' not provided", inputConfig.Name),
 			})
 			return
@@ -511,7 +511,7 @@ func RunInference(c *gin.Context) {
 			shape = inputConfig.Dims
 		} else {
 			log.Printf("No shape defined for input '%s'", inputConfig.Name)
-			c.JSON(http.StatusInternalServerError, gin.H{
+			c.IndentedJSON(http.StatusInternalServerError, gin.H{
 				"error": fmt.Sprintf("No shape defined for input '%s'", inputConfig.Name),
 			})
 			return
@@ -528,7 +528,7 @@ func RunInference(c *gin.Context) {
 			floatData, err := convertToFloat32Array(rawData)
 			if err != nil {
 				log.Printf("Failed to convert input '%s' to float32 array: %v", inputConfig.Name, err)
-				c.JSON(http.StatusBadRequest, gin.H{
+				c.IndentedJSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Failed to convert input '%s' to float32 array: %v", inputConfig.Name, err),
 				})
 				return
@@ -542,7 +542,7 @@ func RunInference(c *gin.Context) {
 			if int64(len(floatData)) != expectedElementCount {
 				log.Printf("Data length mismatch for '%s': expected %d elements (shape %v), got %d",
 					inputConfig.Name, expectedElementCount, shape, len(floatData))
-				c.JSON(http.StatusBadRequest, gin.H{
+				c.IndentedJSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Input '%s' has wrong size: expected %d elements (shape %v), got %d",
 						inputConfig.Name, expectedElementCount, shape, len(floatData)),
 				})
@@ -551,7 +551,7 @@ func RunInference(c *gin.Context) {
 			data = floatData
 		default:
 			log.Printf("Unsupported data type '%s' for input '%s'", inputConfig.DataType, inputConfig.Name)
-			c.JSON(http.StatusBadRequest, gin.H{
+			c.IndentedJSON(http.StatusBadRequest, gin.H{
 				"error": fmt.Sprintf("Unsupported data type '%s' for input '%s'", inputConfig.DataType, inputConfig.Name),
 			})
 			return
@@ -584,7 +584,7 @@ func RunInference(c *gin.Context) {
 	outputs, err := inferenceManager.RunInference(modelName, version, inputs, outputConfigs)
 	if err != nil {
 		log.Printf("Inference failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Inference failed: %v", err),
 		})
 		return
