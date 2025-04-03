@@ -488,34 +488,32 @@ func (m *Model) Destroy() {
 	}
 }
 
-// This function replaces the Model.Infer method in inference_binding.go
+// Runs Inference on the model
 func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
 	if m.handle == nil {
 		return nil, errors.New("model not initialized")
 	}
 
-	// First, check that we have inputs
 	if len(inputs) == 0 {
 		return nil, errors.New("no input tensors provided")
 	}
 
-	// Debug input information
+	// Debug logging for inputs
 	for i, input := range inputs {
 		fmt.Printf("Input tensor %d: name=%s, shape=%v, dataType=%d\n",
 			i, input.Name, input.Shape.Dims, input.DataType)
 	}
 
-	// Debug output configuration
+	// Debug logging for outputs
 	fmt.Println("Output configurations:")
 	for i, outConfig := range outputConfigs {
 		fmt.Printf("Output %d: name=%s, shape=%v, dataType=%s\n",
 			i, outConfig.Name, outConfig.Shape, outConfig.DataType)
 	}
 
-	// Create output tensors based on provided output configurations
+	// Create output tensor objects based on outputConfigs
 	outputs := make([]TensorData, len(outputConfigs))
 	for i, outConfig := range outputConfigs {
-		// Get shape from config
 		var shape []int64
 		if len(outConfig.Shape) > 0 {
 			shape = outConfig.Shape
@@ -525,7 +523,6 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 			return nil, fmt.Errorf("no shape defined for output '%s'", outConfig.Name)
 		}
 
-		// Create buffer for output data based on data type
 		var outputData interface{}
 		var dataType DataType
 
@@ -539,7 +536,6 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 			}
 			outputData = make([]float32, elements)
 			fmt.Printf("Created output buffer for '%s' with %d elements\n", outConfig.Name, elements)
-		// Add cases for other supported data types
 		default:
 			return nil, fmt.Errorf("unsupported data type '%s' for output '%s'", outConfig.DataType, outConfig.Name)
 		}
@@ -552,36 +548,33 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		}
 	}
 
-	// The key issue is the cgo pointer restriction. We need to copy all data
-	// to C-allocated memory and then copy results back to Go memory.
-
-	// First, create C input and output tensor arrays for batch processing
+	// Determine counts
 	inputCount := len(inputs)
 	outputCount := len(outputs)
 
-	// Allocate C memory for string names that will be passed to C
+	// Allocate arrays for C names (for inputs and outputs)
 	inputNames := make([]*C.char, inputCount)
 	outputNames := make([]*C.char, outputCount)
 
-	// Memory to be freed later
+	// Ensure C strings are freed after use
 	defer func() {
 		for i := 0; i < inputCount; i++ {
-			C.free(unsafe.Pointer(inputNames[i]))
+			if inputNames[i] != nil {
+				C.free(unsafe.Pointer(inputNames[i]))
+			}
 		}
 		for i := 0; i < outputCount; i++ {
-			C.free(unsafe.Pointer(outputNames[i]))
+			if outputNames[i] != nil {
+				C.free(unsafe.Pointer(outputNames[i]))
+			}
 		}
 	}()
 
-	// Create arrays for holding input and output shapes in C memory
-	var inputShapeArrays [][]C.int64_t
-	var outputShapeArrays [][]C.int64_t
-
-	// Allocate memory for C tensors
+	// Allocate arrays for C tensor data structures
 	cInputs := make([]C.TensorData, inputCount)
 	cOutputs := make([]C.TensorData, outputCount)
 
-	// Track C memory allocations for cleanup
+	// Track C memory allocations (for shapes, data buffers, etc.) to free later.
 	var cMemoryToFree []unsafe.Pointer
 	defer func() {
 		for _, ptr := range cMemoryToFree {
@@ -589,92 +582,90 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		}
 	}()
 
-	// Process input tensors to C format
+	// Process input tensors
 	for i, input := range inputs {
-		// Convert names to C strings
+		// Convert the input name to a C string
 		inputNames[i] = C.CString(input.Name)
 		cInputs[i].name = inputNames[i]
 		cInputs[i].data_type = C.DataType(input.DataType)
 
-		// Process shapes
+		// Allocate C memory for the shape dims array
 		if len(input.Shape.Dims) > 0 {
-			// Allocate shape array in C memory
-			shapeArray := make([]C.int64_t, len(input.Shape.Dims))
-			for j, dim := range input.Shape.Dims {
-				shapeArray[j] = C.int64_t(dim)
+			dimsCount := len(input.Shape.Dims)
+			dimsSize := C.size_t(dimsCount) * C.size_t(unsafe.Sizeof(C.int64_t(0)))
+			cDims := C.malloc(dimsSize)
+			if cDims == nil {
+				return nil, errors.New("failed to allocate memory for input shape dims")
 			}
-			inputShapeArrays = append(inputShapeArrays, shapeArray)
-
-			// Set shape in the C struct
-			cInputs[i].shape.dims = &inputShapeArrays[len(inputShapeArrays)-1][0]
-			cInputs[i].shape.num_dims = C.int(len(input.Shape.Dims))
+			// Create a slice backed by the C memory and copy dims into it.
+			dimsSlice := (*[1 << 30]C.int64_t)(cDims)[:dimsCount:dimsCount]
+			for j, dim := range input.Shape.Dims {
+				dimsSlice[j] = C.int64_t(dim)
+			}
+			cInputs[i].shape.dims = (*C.int64_t)(cDims)
+			cInputs[i].shape.num_dims = C.int(dimsCount)
+			cMemoryToFree = append(cMemoryToFree, cDims)
 		}
 
-		// Process data based on type
+		// Process input data (currently handling float32 only)
 		switch input.DataType {
 		case DataTypeFloat32:
-			if floatData, ok := input.Data.([]float32); ok && len(floatData) > 0 {
-				// Calculate data size
-				dataSize := len(floatData) * int(unsafe.Sizeof(float32(0)))
-
-				// Allocate C memory for the data
-				dataPtr := C.malloc(C.size_t(dataSize))
-				cMemoryToFree = append(cMemoryToFree, dataPtr)
-
-				// Copy Go data to C memory
-				// This is safer than using Go memory directly
-				cFloatArray := (*[1 << 30]float32)(dataPtr)[:len(floatData):len(floatData)]
-				copy(cFloatArray, floatData)
-
-				// Set data pointer in C struct
-				cInputs[i].data = dataPtr
-				cInputs[i].data_size = C.size_t(dataSize)
-			} else {
+			floatData, ok := input.Data.([]float32)
+			if !ok || len(floatData) == 0 {
 				return nil, errors.New("invalid float32 data for input " + input.Name)
 			}
+			dataSize := len(floatData) * int(unsafe.Sizeof(float32(0)))
+			dataPtr := C.malloc(C.size_t(dataSize))
+			if dataPtr == nil {
+				return nil, errors.New("failed to allocate memory for input data")
+			}
+			cMemoryToFree = append(cMemoryToFree, dataPtr)
+			cFloatArray := (*[1 << 30]float32)(dataPtr)[:len(floatData):len(floatData)]
+			copy(cFloatArray, floatData)
+			cInputs[i].data = dataPtr
+			cInputs[i].data_size = C.size_t(dataSize)
 		default:
 			return nil, errors.New("unsupported data type for input " + input.Name)
 		}
 	}
 
-	// Process output tensors similarly
+	// Process output tensors
 	for i, output := range outputs {
-		// Convert names to C strings
+		// Convert the output name to a C string
 		outputNames[i] = C.CString(output.Name)
 		cOutputs[i].name = outputNames[i]
 		cOutputs[i].data_type = C.DataType(output.DataType)
 
-		// Process shapes
+		// Allocate C memory for the shape dims array
 		if len(output.Shape.Dims) > 0 {
-			// Allocate shape array in C memory
-			shapeArray := make([]C.int64_t, len(output.Shape.Dims))
-			for j, dim := range output.Shape.Dims {
-				shapeArray[j] = C.int64_t(dim)
+			dimsCount := len(output.Shape.Dims)
+			dimsSize := C.size_t(dimsCount) * C.size_t(unsafe.Sizeof(C.int64_t(0)))
+			cDims := C.malloc(dimsSize)
+			if cDims == nil {
+				return nil, errors.New("failed to allocate memory for output shape dims")
 			}
-			outputShapeArrays = append(outputShapeArrays, shapeArray)
-
-			// Set shape in the C struct
-			cOutputs[i].shape.dims = &outputShapeArrays[len(outputShapeArrays)-1][0]
-			cOutputs[i].shape.num_dims = C.int(len(output.Shape.Dims))
+			dimsSlice := (*[1 << 30]C.int64_t)(cDims)[:dimsCount:dimsCount]
+			for j, dim := range output.Shape.Dims {
+				dimsSlice[j] = C.int64_t(dim)
+			}
+			cOutputs[i].shape.dims = (*C.int64_t)(cDims)
+			cOutputs[i].shape.num_dims = C.int(dimsCount)
+			cMemoryToFree = append(cMemoryToFree, cDims)
 		}
 
-		// Allocate memory for output data
+		// Allocate memory for output data (float32 only)
 		switch output.DataType {
 		case DataTypeFloat32:
-			// Get the output slice
 			floatData, ok := output.Data.([]float32)
 			if !ok || len(floatData) == 0 {
 				return nil, errors.New("invalid float32 data for output " + output.Name)
 			}
-
-			// Calculate data size
 			dataSize := len(floatData) * int(unsafe.Sizeof(float32(0)))
-
-			// Allocate C memory for the output data
 			dataPtr := C.malloc(C.size_t(dataSize))
+			if dataPtr == nil {
+				return nil, errors.New("failed to allocate memory for output data")
+			}
 			cMemoryToFree = append(cMemoryToFree, dataPtr)
-
-			// Set data pointer in C struct
 			cOutputs[i].data = dataPtr
 			cOutputs[i].data_size = C.size_t(dataSize)
 		default:
@@ -682,7 +673,7 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		}
 	}
 
-	// Execute inference using C API
+	// Call the C API to run inference
 	var cError C.ErrorMessage
 	success := C.ModelInfer(
 		m.handle,
@@ -690,8 +681,6 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		&cOutputs[0], C.int(outputCount),
 		&cError,
 	)
-
-	// Handle error
 	if !bool(success) {
 		var err error
 		if cError != nil {
@@ -703,18 +692,20 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		return nil, err
 	}
 
-	// Copy output data back to Go memory
+	// Copy the output data from C memory back into the Go slices
 	for i, output := range outputs {
 		switch output.DataType {
 		case DataTypeFloat32:
 			floatData, ok := output.Data.([]float32)
 			if !ok {
-				return nil, errors.New("invalid output buffer")
+				return nil, errors.New("invalid output data for " + output.Name)
 			}
-
-			// Copy C memory back to Go slice
-			cFloatArray := (*[1 << 30]float32)(cOutputs[i].data)[:len(floatData):len(floatData)]
+			dataSize := int(cOutputs[i].data_size)
+			numElements := dataSize / int(unsafe.Sizeof(float32(0)))
+			cFloatArray := (*[1 << 30]float32)(cOutputs[i].data)[:numElements:numElements]
 			copy(floatData, cFloatArray)
+		default:
+			return nil, errors.New("unsupported data type for output " + output.Name)
 		}
 	}
 
