@@ -10,6 +10,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -220,6 +221,7 @@ func getModelKey(modelName, version string) string {
 
 // LoadModel loads a model into the inference server
 func (im *InferenceManager) LoadModel(modelName, version string) error {
+	log.Printf("DEBUG: LoadModel called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return errors.New("inference manager not initialized")
 	}
@@ -234,7 +236,9 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 	}
 
 	var cError C.ErrorMessage
+	log.Printf("DEBUG: Calling C.InferenceLoadModel for %s:%s", modelName, version)
 	success := C.InferenceLoadModel(im.handle, cModelName, cVersion, &cError)
+	log.Printf("DEBUG: C.InferenceLoadModel returned: success=%v", success)
 	if !success {
 		var err error
 		if cError != nil {
@@ -243,11 +247,13 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 		} else {
 			err = errors.New("failed to load model")
 		}
+		log.Printf("DEBUG: LoadModel failed with error: %v", err)
 		return err
 	}
 
 	// After successful loading, create a Model instance and add to our map
 	modelKey := getModelKey(modelName, version)
+	log.Printf("DEBUG: Model successfully loaded, creating model key: %s", modelKey)
 
 	// Create model config to use for creating the model
 	config := ModelConfig{
@@ -256,14 +262,18 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 	}
 
 	// Create the model
+	log.Printf("DEBUG: Creating model handle via createModelInternal")
 	model, err := createModelInternal(modelName, config, DeviceGPU, 0)
 	if err != nil {
+		log.Printf("DEBUG: Failed to create model handle: %v", err)
 		return fmt.Errorf("model loaded in server but failed to create local handle: %v", err)
 	}
+	log.Printf("DEBUG: Model handle created successfully: %p", model.handle)
 
 	// Store it in our map
 	im.loadedModelsMutex.Lock()
 	im.loadedModels[modelKey] = model
+	log.Printf("DEBUG: Model added to loadedModels map with key: %s", modelKey)
 	im.loadedModelsMutex.Unlock()
 
 	return nil
@@ -355,25 +365,31 @@ func (im *InferenceManager) ListModels() []string {
 
 // GetModel gets a reference to an already loaded model
 func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) {
+	log.Printf("DEBUG: GetModel called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return nil, errors.New("inference manager not initialized")
 	}
 
 	// Check if the model is loaded in the server
-	if !im.IsModelLoaded(modelName, version) {
+	isLoaded := im.IsModelLoaded(modelName, version)
+	log.Printf("DEBUG: IsModelLoaded returned: %v", isLoaded)
+	if !isLoaded {
 		return nil, fmt.Errorf("model '%s:%s' is not loaded", modelName, version)
 	}
 
 	// Lookup in our local map
 	modelKey := getModelKey(modelName, version)
+	log.Printf("DEBUG: Looking up model with key: %s", modelKey)
 
 	im.loadedModelsMutex.RLock()
 	model, exists := im.loadedModels[modelKey]
 	im.loadedModelsMutex.RUnlock()
 
+	log.Printf("DEBUG: Model exists in map: %v, model handle: %p", exists, model)
 	if !exists {
 		// If we don't have it in our map but it's loaded in the server,
 		// create a new local model handle and add it to our map
+		log.Printf("DEBUG: Model not found in map, creating new handle")
 		config := ModelConfig{
 			Name:    modelName,
 			Version: version,
@@ -382,12 +398,15 @@ func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) 
 		var err error
 		model, err = createModelInternal(modelName, config, DeviceGPU, 0)
 		if err != nil {
+			log.Printf("DEBUG: Failed to create new model handle: %v", err)
 			return nil, fmt.Errorf("failed to get handle for loaded model: %v", err)
 		}
+		log.Printf("DEBUG: Created new model handle: %p", model.handle)
 
 		// Add to our map
 		im.loadedModelsMutex.Lock()
 		im.loadedModels[modelKey] = model
+		log.Printf("DEBUG: Added new model handle to map with key: %s", modelKey)
 		im.loadedModelsMutex.Unlock()
 	}
 
@@ -396,17 +415,22 @@ func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) 
 
 // RunInference executes inference using a loaded model
 func (im *InferenceManager) RunInference(modelName string, version string, inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
+	log.Printf("DEBUG: RunInference called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return nil, errors.New("inference manager not initialized")
 	}
 
 	// Get reference to the already loaded model
+	log.Printf("DEBUG: Getting model for inference")
 	model, err := im.GetModel(modelName, version)
 	if err != nil {
+		log.Printf("DEBUG: Failed to get model for inference: %v", err)
 		return nil, fmt.Errorf("failed to get model for inference: %v", err)
 	}
+	log.Printf("DEBUG: Got model handle: %p", model.handle)
 
 	// Run inference using the existing model, passing output configurations
+	log.Printf("DEBUG: Calling model.Infer with %d inputs and %d output configs", len(inputs), len(outputConfigs))
 	return model.Infer(inputs, outputConfigs)
 }
 
@@ -414,6 +438,8 @@ func (im *InferenceManager) RunInference(modelName string, version string, input
 
 // createModelInternal creates a model handle for an already loaded model
 func createModelInternal(modelPath string, config ModelConfig, deviceType DeviceType, deviceID int) (*Model, error) {
+	log.Printf("DEBUG: createModelInternal called for path %s", modelPath)
+
 	cModelPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cModelPath))
 
@@ -477,6 +503,7 @@ func createModelInternal(modelPath string, config ModelConfig, deviceType Device
 		name:    config.Name,
 		version: config.Version,
 	}
+	log.Printf("DEBUG: Created new Model instance with handle: %p", model.handle)
 	return model, nil
 }
 
@@ -490,8 +517,17 @@ func (m *Model) Destroy() {
 
 // Runs Inference on the model
 func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
+	log.Printf("DEBUG: Model.Infer called on model handle: %p", m.handle)
 	if m.handle == nil {
 		return nil, errors.New("model not initialized")
+	}
+
+	// Check if model is loaded by directly calling C function
+	log.Printf("DEBUG: Checking if model is loaded via C.ModelIsLoaded")
+	isLoaded := bool(C.ModelIsLoaded(m.handle))
+	log.Printf("DEBUG: C.ModelIsLoaded returned: %v", isLoaded)
+	if !isLoaded {
+		return nil, errors.New("model not loaded")
 	}
 
 	if len(inputs) == 0 {
