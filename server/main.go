@@ -592,7 +592,7 @@ func RunInference(c *gin.Context) {
 
 	log.Printf("Inference succeeded, processing %d outputs", len(outputs))
 	responseOutputs := processOutputs(outputs, modelConfig.Outputs)
-	c.JSON(http.StatusOK, gin.H{
+	c.IndentedJSON(http.StatusOK, gin.H{
 		"model_name":    modelName,
 		"model_version": version,
 		"outputs":       responseOutputs,
