@@ -1,10 +1,10 @@
 package binding
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../include
-#cgo LDFLAGS: -L${SRCDIR}/../../build/inference_engine -linference_engine -lstdc++ -Wl,-rpath,${SRCDIR}/../../build/inference_engine
 #include <stdlib.h>
 #include "inference_bridge.h"
+#cgo CFLAGS: -I${SRCDIR}/../include
+#cgo LDFLAGS: -L${SRCDIR}/../../build/inference_engine -linference_engine -lstdc++ -Wl,-rpath,${SRCDIR}/../../build/inference_engine
 */
 import "C"
 import (
@@ -488,7 +488,7 @@ func (m *Model) Destroy() {
 	}
 }
 
-// Infer runs inference on the model
+// This function replaces the Model.Infer method in inference_binding.go
 func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
 	if m.handle == nil {
 		return nil, errors.New("model not initialized")
@@ -510,69 +510,6 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 	for i, outConfig := range outputConfigs {
 		fmt.Printf("Output %d: name=%s, shape=%v, dataType=%s\n",
 			i, outConfig.Name, outConfig.Shape, outConfig.DataType)
-	}
-
-	// Create C input tensors
-	cInputs := make([]C.TensorData, len(inputs))
-
-	// Important: Create a slice to hold all our C strings that need to be freed
-	// This ensures they stay in memory until we're done with them
-	cStringsToFree := make([]*C.char, 0)
-	defer func() {
-		for _, str := range cStringsToFree {
-			C.free(unsafe.Pointer(str))
-		}
-	}()
-
-	for i, input := range inputs {
-		// Create shape
-		var shapePtr *C.int64_t
-		var shapeCopy []int64
-
-		if len(input.Shape.Dims) > 0 {
-			// Create a copy of the shape slice to ensure memory safety
-			shapeCopy = make([]int64, len(input.Shape.Dims))
-			copy(shapeCopy, input.Shape.Dims)
-			shapePtr = (*C.int64_t)(unsafe.Pointer(&shapeCopy[0]))
-		}
-
-		shape := C.Shape{
-			dims:     shapePtr,
-			num_dims: C.int(len(input.Shape.Dims)),
-		}
-
-		// Handle data based on type
-		var dataPtr unsafe.Pointer
-		var dataSize C.size_t
-
-		switch input.DataType {
-		case DataTypeFloat32:
-			if floatData, ok := input.Data.([]float32); ok && len(floatData) > 0 {
-				// Create a copy of the float data to ensure memory safety
-				dataCopy := make([]float32, len(floatData))
-				copy(dataCopy, floatData)
-				dataPtr = unsafe.Pointer(&dataCopy[0])
-				dataSize = C.size_t(len(dataCopy) * 4) // 4 bytes per float32
-			} else {
-				return nil, errors.New("invalid float32 data for input " + input.Name)
-			}
-		// Add cases for other supported data types
-
-		default:
-			return nil, errors.New("unsupported data type for input " + input.Name)
-		}
-
-		// Create a C string from Go string
-		nameC := C.CString(input.Name)
-		cStringsToFree = append(cStringsToFree, nameC)
-
-		cInputs[i] = C.TensorData{
-			name:      nameC,
-			data_type: C.DataType(input.DataType),
-			shape:     shape,
-			data:      dataPtr,
-			data_size: dataSize,
-		}
 	}
 
 	// Create output tensors based on provided output configurations
@@ -615,88 +552,147 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 		}
 	}
 
-	// Create C output tensors
-	cOutputs := make([]C.TensorData, len(outputs))
+	// The key issue is the cgo pointer restriction. We need to copy all data
+	// to C-allocated memory and then copy results back to Go memory.
+
+	// First, create C input and output tensor arrays for batch processing
+	inputCount := len(inputs)
+	outputCount := len(outputs)
+
+	// Allocate C memory for string names that will be passed to C
+	inputNames := make([]*C.char, inputCount)
+	outputNames := make([]*C.char, outputCount)
+
+	// Memory to be freed later
+	defer func() {
+		for i := 0; i < inputCount; i++ {
+			C.free(unsafe.Pointer(inputNames[i]))
+		}
+		for i := 0; i < outputCount; i++ {
+			C.free(unsafe.Pointer(outputNames[i]))
+		}
+	}()
+
+	// Create arrays for holding input and output shapes in C memory
+	var inputShapeArrays [][]C.int64_t
+	var outputShapeArrays [][]C.int64_t
+
+	// Allocate memory for C tensors
+	cInputs := make([]C.TensorData, inputCount)
+	cOutputs := make([]C.TensorData, outputCount)
+
+	// Track C memory allocations for cleanup
+	var cMemoryToFree []unsafe.Pointer
+	defer func() {
+		for _, ptr := range cMemoryToFree {
+			C.free(ptr)
+		}
+	}()
+
+	// Process input tensors to C format
+	for i, input := range inputs {
+		// Convert names to C strings
+		inputNames[i] = C.CString(input.Name)
+		cInputs[i].name = inputNames[i]
+		cInputs[i].data_type = C.DataType(input.DataType)
+
+		// Process shapes
+		if len(input.Shape.Dims) > 0 {
+			// Allocate shape array in C memory
+			shapeArray := make([]C.int64_t, len(input.Shape.Dims))
+			for j, dim := range input.Shape.Dims {
+				shapeArray[j] = C.int64_t(dim)
+			}
+			inputShapeArrays = append(inputShapeArrays, shapeArray)
+
+			// Set shape in the C struct
+			cInputs[i].shape.dims = &inputShapeArrays[len(inputShapeArrays)-1][0]
+			cInputs[i].shape.num_dims = C.int(len(input.Shape.Dims))
+		}
+
+		// Process data based on type
+		switch input.DataType {
+		case DataTypeFloat32:
+			if floatData, ok := input.Data.([]float32); ok && len(floatData) > 0 {
+				// Calculate data size
+				dataSize := len(floatData) * int(unsafe.Sizeof(float32(0)))
+
+				// Allocate C memory for the data
+				dataPtr := C.malloc(C.size_t(dataSize))
+				cMemoryToFree = append(cMemoryToFree, dataPtr)
+
+				// Copy Go data to C memory
+				// This is safer than using Go memory directly
+				cFloatArray := (*[1 << 30]float32)(dataPtr)[:len(floatData):len(floatData)]
+				copy(cFloatArray, floatData)
+
+				// Set data pointer in C struct
+				cInputs[i].data = dataPtr
+				cInputs[i].data_size = C.size_t(dataSize)
+			} else {
+				return nil, errors.New("invalid float32 data for input " + input.Name)
+			}
+		default:
+			return nil, errors.New("unsupported data type for input " + input.Name)
+		}
+	}
+
+	// Process output tensors similarly
 	for i, output := range outputs {
-		// Create shape - make a copy for safety
-		var shapePtr *C.int64_t
-		var shapeCopy []int64
+		// Convert names to C strings
+		outputNames[i] = C.CString(output.Name)
+		cOutputs[i].name = outputNames[i]
+		cOutputs[i].data_type = C.DataType(output.DataType)
 
+		// Process shapes
 		if len(output.Shape.Dims) > 0 {
-			shapeCopy = make([]int64, len(output.Shape.Dims))
-			copy(shapeCopy, output.Shape.Dims)
-			shapePtr = (*C.int64_t)(unsafe.Pointer(&shapeCopy[0]))
+			// Allocate shape array in C memory
+			shapeArray := make([]C.int64_t, len(output.Shape.Dims))
+			for j, dim := range output.Shape.Dims {
+				shapeArray[j] = C.int64_t(dim)
+			}
+			outputShapeArrays = append(outputShapeArrays, shapeArray)
+
+			// Set shape in the C struct
+			cOutputs[i].shape.dims = &outputShapeArrays[len(outputShapeArrays)-1][0]
+			cOutputs[i].shape.num_dims = C.int(len(output.Shape.Dims))
 		}
 
-		shape := C.Shape{
-			dims:     shapePtr,
-			num_dims: C.int(len(output.Shape.Dims)),
-		}
-
-		// Handle data based on type
-		var dataPtr unsafe.Pointer
-		var dataSize C.size_t
-
+		// Allocate memory for output data
 		switch output.DataType {
 		case DataTypeFloat32:
-			if floatData, ok := output.Data.([]float32); ok && len(floatData) > 0 {
-				// For output, we need to pass the actual slice since we need to get results back
-				dataPtr = unsafe.Pointer(&floatData[0])
-				dataSize = C.size_t(len(floatData) * 4) // 4 bytes per float32
-			} else {
+			// Get the output slice
+			floatData, ok := output.Data.([]float32)
+			if !ok || len(floatData) == 0 {
 				return nil, errors.New("invalid float32 data for output " + output.Name)
 			}
-		// Add cases for other supported data types
 
+			// Calculate data size
+			dataSize := len(floatData) * int(unsafe.Sizeof(float32(0)))
+
+			// Allocate C memory for the output data
+			dataPtr := C.malloc(C.size_t(dataSize))
+			cMemoryToFree = append(cMemoryToFree, dataPtr)
+
+			// Set data pointer in C struct
+			cOutputs[i].data = dataPtr
+			cOutputs[i].data_size = C.size_t(dataSize)
 		default:
 			return nil, errors.New("unsupported data type for output " + output.Name)
 		}
-
-		// Create a C string from Go string
-		nameC := C.CString(output.Name)
-		cStringsToFree = append(cStringsToFree, nameC)
-
-		cOutputs[i] = C.TensorData{
-			name:      nameC,
-			data_type: C.DataType(output.DataType),
-			shape:     shape,
-			data:      dataPtr,
-			data_size: dataSize,
-		}
 	}
 
-	// Run inference using a separate function to avoid CGO pointer issues
-	result, err := runModelInfer(m.handle, cInputs, cOutputs)
-	if err != nil {
-		return nil, err
-	}
-
-	if !result {
-		return nil, errors.New("failed to run inference")
-	}
-
-	// Output data is already updated in the output slices since we passed pointers
-	return outputs, nil
-}
-
-// Helper function to safely call C function
-func runModelInfer(handle C.ModelHandle, inputs []C.TensorData, outputs []C.TensorData) (bool, error) {
+	// Execute inference using C API
 	var cError C.ErrorMessage
-	var success C.bool
+	success := C.ModelInfer(
+		m.handle,
+		&cInputs[0], C.int(inputCount),
+		&cOutputs[0], C.int(outputCount),
+		&cError,
+	)
 
-	if len(inputs) > 0 && len(outputs) > 0 {
-		success = C.ModelInfer(
-			handle,
-			&inputs[0], C.int(len(inputs)),
-			&outputs[0], C.int(len(outputs)),
-			&cError,
-		)
-	} else {
-		// Handle empty input or output case
-		return false, errors.New("model requires at least one input and output")
-	}
-
-	if !success {
+	// Handle error
+	if !bool(success) {
 		var err error
 		if cError != nil {
 			err = errors.New(C.GoString(cError))
@@ -704,11 +700,28 @@ func runModelInfer(handle C.ModelHandle, inputs []C.TensorData, outputs []C.Tens
 		} else {
 			err = errors.New("failed to run inference")
 		}
-		return false, err
+		return nil, err
 	}
 
-	return bool(success), nil
+	// Copy output data back to Go memory
+	for i, output := range outputs {
+		switch output.DataType {
+		case DataTypeFloat32:
+			floatData, ok := output.Data.([]float32)
+			if !ok {
+				return nil, errors.New("invalid output buffer")
+			}
+
+			// Copy C memory back to Go slice
+			cFloatArray := (*[1 << 30]float32)(cOutputs[i].data)[:len(floatData):len(floatData)]
+			copy(floatData, cFloatArray)
+		}
+	}
+
+	return outputs, nil
 }
+
+// Note: This function replaces the previous runModelInfer, so you can remove that function
 
 // GetMetadata gets metadata about the model
 func (m *Model) GetMetadata() (*ModelMetadata, error) {
