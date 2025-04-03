@@ -470,14 +470,13 @@ func RunInference(c *gin.Context) {
 
 	log.Printf("Model config loaded successfully: %+v", modelConfig)
 
-	// Parse the request body - simplified to just expect input data
+	// Parse the request body
 	var request struct {
 		Inputs map[string]interface{} `json:"inputs"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Invalid request format: %v", err)
-		log.Printf("Request body: %s", c.Request.Body)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
 		return
 	}
@@ -504,46 +503,61 @@ func RunInference(c *gin.Context) {
 		}
 
 		log.Printf("Processing input '%s' with data type '%s'", inputConfig.Name, inputConfig.DataType)
-		log.Printf("Expected shape: %v", inputConfig.Shape)
 
-		// Convert the input data to the right format based on data type - only care about float for now
+		// Get shape from config
+		var shape []int64
+		if len(inputConfig.Shape) > 0 {
+			shape = inputConfig.Shape
+		} else if len(inputConfig.Dims) > 0 {
+			shape = inputConfig.Dims
+		} else {
+			log.Printf("No shape or dims defined for input '%s'", inputConfig.Name)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("No shape defined for input '%s'", inputConfig.Name),
+			})
+			return
+		}
+
+		log.Printf("Input shape: %v", shape)
+
+		// Convert the input data to the right format based on data type
 		var data interface{}
 		var dataType binding.DataType
 
 		switch inputConfig.DataType {
-		case "FLOAT32":
+		case "FLOAT32", "TYPE_FP32":
 			dataType = binding.DataTypeFloat32
 
 			// Try to convert input data to []float32
 			floatData, err := convertToFloat32Array(rawData)
 			if err != nil {
 				log.Printf("Failed to convert input '%s' to float32 array: %v", inputConfig.Name, err)
-				log.Printf("Raw data was: %+v", rawData)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Failed to convert input '%s' to float32 array: %v", inputConfig.Name, err),
 				})
 				return
 			}
 
-			log.Printf("Converted data: %+v (length: %d)", floatData, len(floatData))
+			log.Printf("Converted data for '%s': length=%d", inputConfig.Name, len(floatData))
 
 			// Verify shape matches expected dims
 			expectedElementCount := int64(1)
-			for _, dim := range inputConfig.Shape {
+			for _, dim := range shape {
 				expectedElementCount *= dim
 			}
 
 			if int64(len(floatData)) != expectedElementCount {
 				log.Printf("Data length mismatch: got %d elements, expected %d elements based on shape %v",
-					len(floatData), expectedElementCount, inputConfig.Shape)
+					len(floatData), expectedElementCount, shape)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": fmt.Sprintf("Input '%s' has wrong size: expected %d elements (shape %v), got %d",
-						inputConfig.Name, expectedElementCount, inputConfig.Shape, len(floatData)),
+						inputConfig.Name, expectedElementCount, shape, len(floatData)),
 				})
 				return
 			}
 
 			data = floatData
+		// Add support for other data types as needed
 		default:
 			log.Printf("Unsupported data type '%s' for input '%s'", inputConfig.DataType, inputConfig.Name)
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -556,19 +570,29 @@ func RunInference(c *gin.Context) {
 		tensor := binding.TensorData{
 			Name:     inputConfig.Name,
 			DataType: dataType,
-			Shape:    binding.Shape{Dims: inputConfig.Shape},
+			Shape:    binding.Shape{Dims: shape},
 			Data:     data,
 		}
-
-		log.Printf("Created tensor for input '%s' with shape %v", tensor.Name, tensor.Shape.Dims)
 
 		inputs = append(inputs, tensor)
 	}
 
-	log.Printf("Prepared %d tensor inputs, calling inference engine", len(inputs))
+	log.Printf("Created %d input tensors, calling inference engine", len(inputs))
 
-	// Call the binding layer to run inference
-	outputs, err := inferenceManager.RunInference(modelName, version, inputs)
+	// Convert output configs to binding format
+	outputConfigs := make([]binding.OutputConfig, len(modelConfig.Outputs))
+	for i, outConfig := range modelConfig.Outputs {
+		outputConfigs[i] = binding.OutputConfig{
+			Name:          outConfig.Name,
+			Shape:         outConfig.Shape,
+			Dims:          outConfig.Dims,
+			DataType:      outConfig.DataType,
+			LabelFilename: outConfig.LabelFilename,
+		}
+	}
+
+	// Call the binding layer to run inference, passing output configs
+	outputs, err := inferenceManager.RunInference(modelName, version, inputs, outputConfigs)
 	if err != nil {
 		log.Printf("Inference failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -579,8 +603,7 @@ func RunInference(c *gin.Context) {
 
 	log.Printf("Inference succeeded, processing %d outputs", len(outputs))
 
-	// Convert the output tensors to a more user-friendly response
-	// that includes classification labels if available
+	// Process the outputs based on the model configuration
 	responseOutputs := processOutputs(outputs, modelConfig.Outputs)
 
 	// Send the response
