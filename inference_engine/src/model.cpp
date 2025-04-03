@@ -391,6 +391,9 @@ namespace inference
               loaded_(false)
         {
 
+            std::cerr << "DEBUG [ModelImpl::ModelImpl]: Creating impl at " << this << " for path " << model_path << std::endl;
+            std::cerr << "DEBUG [ModelImpl::ModelImpl]: Initial loaded_ state: " << (loaded_ ? "true" : "false") << std::endl;
+
             // Initialize metadata
             metadata_.name = config_.name;
             metadata_.version = config_.version;
@@ -416,12 +419,16 @@ namespace inference
 
         bool Load()
         {
+            std::cerr << "DEBUG [ModelImpl::Load]: Loading model at " << this << std::endl;
+            std::cerr << "DEBUG [ModelImpl::Load]: Initial loaded_ = " << (loaded_ ? "true" : "false") << std::endl;
+
             auto start_time = std::chrono::high_resolution_clock::now();
 
             // Check model file exists
             if (!FileExists(model_path_))
             {
                 last_error_ = "Model file not found: " + model_path_;
+                std::cerr << "DEBUG [ModelImpl::Load]: " << last_error_ << std::endl;
                 return false;
             }
 
@@ -441,6 +448,7 @@ namespace inference
 
             case ModelType::ONNX:
                 loaded_ = LoadONNXModel();
+                std::cerr << "DEBUG [ModelImpl::Load]: After LoadONNXModel, loaded_ = " << (loaded_ ? "true" : "false") << std::endl;
                 break;
 
             case ModelType::PYTORCH:
@@ -453,6 +461,7 @@ namespace inference
 
             default:
                 last_error_ = "Unsupported model type";
+                std::cerr << "DEBUG [ModelImpl::Load]: " << last_error_ << std::endl;
                 return false;
             }
 
@@ -461,14 +470,19 @@ namespace inference
                                          end_time - start_time)
                                          .count();
 
+            std::cerr << "DEBUG [ModelImpl::Load]: Final loaded_ = " << (loaded_ ? "true" : "false") << std::endl;
             return loaded_;
         }
 
         bool Infer(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
+            std::cerr << "DEBUG [ModelImpl::Infer]: Starting inference at " << this << std::endl;
+            std::cerr << "DEBUG [ModelImpl::Infer]: loaded_ = " << (loaded_ ? "true" : "false") << std::endl;
+
             if (!loaded_)
             {
                 last_error_ = "Model not loaded";
+                std::cerr << "DEBUG [ModelImpl::Infer]: " << last_error_ << std::endl;
                 return false;
             }
 
@@ -567,6 +581,7 @@ namespace inference
 
         bool IsLoaded() const
         {
+            std::cerr << "DEBUG [ModelImpl::IsLoaded]: Checking loaded_ = " << (loaded_ ? "true" : "false") << std::endl;
             return loaded_;
         }
 
@@ -706,6 +721,10 @@ namespace inference
          */
         bool LoadONNXModel()
         {
+            std::cerr << "DEBUG [LoadONNXModel]: Starting ONNX model loading at " << this << std::endl;
+            // Add a memory address indicator for debugging
+            std::cerr << "DEBUG [LoadONNXModel]: Address of loaded_ = " << &loaded_ << std::endl;
+
             try
             {
                 // Construct the full path to the ONNX file
@@ -738,6 +757,10 @@ namespace inference
 
                 // Update memory usage statistics
                 stats_.memory_usage_bytes = EstimateModelMemoryUsage();
+
+                std::cerr << "DEBUG [LoadONNXModel]: Successfully verified model file exists" << std::endl;
+                loaded_ = true;
+                std::cerr << "DEBUG [LoadONNXModel]: Set loaded_ = true" << std::endl;
 
                 return true;
             }
@@ -1365,7 +1388,10 @@ namespace inference
                  const ModelConfig &config,
                  DeviceType device,
                  int device_id)
-        : impl_(new ModelImpl(model_path, type, config, device, device_id)) {}
+        : impl_(new ModelImpl(model_path, type, config, device, device_id))
+    {
+        std::cerr << "DEBUG [Model::Model]: Creating model at " << this << " for path " << model_path << std::endl;
+    }
 
     Model::~Model() = default;
 
@@ -1374,11 +1400,17 @@ namespace inference
 
     bool Model::Load()
     {
+        std::cerr << "DEBUG [Model::Load]: Loading model at " << this << std::endl;
         return impl_->Load();
     }
 
     bool Model::Infer(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
     {
+        std::cerr << "DEBUG [Model::Infer]: Starting inference at " << this << std::endl;
+        std::cerr << "DEBUG [Model::Infer]: First checking if model is loaded" << std::endl;
+        bool loaded = IsLoaded();
+        std::cerr << "DEBUG [Model::Infer]: IsLoaded() returned " << (loaded ? "true" : "false") << std::endl;
+
         return impl_->Infer(inputs, outputs);
     }
 
@@ -1389,7 +1421,10 @@ namespace inference
 
     bool Model::IsLoaded() const
     {
-        return impl_->IsLoaded();
+        std::cerr << "DEBUG [Model::IsLoaded]: Checking model loaded state at " << this << std::endl;
+        bool loaded = impl_->IsLoaded();
+        std::cerr << "DEBUG [Model::IsLoaded]: Loaded state = " << (loaded ? "true" : "false") << std::endl;
+        return loaded;
     }
 
     void Model::Unload()

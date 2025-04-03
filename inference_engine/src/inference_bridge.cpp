@@ -496,6 +496,9 @@ extern "C"
     // Model Functions
     ModelHandle ModelCreate(const char *model_path, ModelType type, const ModelConfig *config, DeviceType device, int device_id, ErrorMessage *error)
     {
+        std::cerr << "DEBUG [ModelCreate]: Creating model for path " << (model_path ? model_path : "NULL")
+                  << ", type " << static_cast<int>(type) << std::endl;
+
         if (!model_path || !config)
         {
             if (error)
@@ -542,6 +545,8 @@ extern "C"
 
             // Create and return bridge
             Model_t *handle = new Model_t(std::move(model));
+
+            std::cerr << "DEBUG [ModelCreate]: Model created successfully: " << static_cast<void *>(handle) << std::endl;
             return handle;
         }
         catch (const std::exception &e)
@@ -559,24 +564,34 @@ extern "C"
 
     bool ModelLoad(ModelHandle handle, ErrorMessage *error)
     {
+        std::cerr << "DEBUG [ModelLoad]: Loading model handle " << static_cast<void *>(handle) << std::endl;
         if (!handle)
         {
             if (error)
                 *error = strdup_helper("Invalid model handle");
+            std::cerr << "DEBUG [ModelLoad]: Invalid model handle" << std::endl;
             return false;
         }
 
         try
         {
             bool success = handle->model->Load();
+            std::cerr << "DEBUG [ModelLoad]: handle->model->Load() returned " << (success ? "true" : "false") << std::endl;
+
             if (!success && error)
             {
                 *error = strdup_helper(handle->model->GetLastError());
+                std::cerr << "DEBUG [ModelLoad]: Error: " << handle->model->GetLastError() << std::endl;
             }
+
+            // Check loaded state after loading
+            std::cerr << "DEBUG [ModelLoad]: Model IsLoaded() = " << (handle->model->IsLoaded() ? "true" : "false") << std::endl;
+
             return success;
         }
         catch (const std::exception &e)
         {
+            std::cerr << "DEBUG [ModelLoad]: Exception: " << e.what() << std::endl;
             if (error)
                 *error = strdup_helper(e.what());
             return false;
@@ -607,23 +622,51 @@ extern "C"
 
     bool ModelIsLoaded(ModelHandle handle)
     {
+        std::cerr << "DEBUG [ModelIsLoaded]: Checking if model is loaded for handle " << static_cast<void *>(handle) << std::endl;
         if (!handle)
         {
+            std::cerr << "DEBUG [ModelIsLoaded]: Invalid handle, returning false" << std::endl;
             return false;
         }
 
         try
         {
-            return handle->model->IsLoaded();
+            bool loaded = handle->model->IsLoaded();
+            std::cerr << "DEBUG [ModelIsLoaded]: handle->model->IsLoaded() returned " << (loaded ? "true" : "false") << std::endl;
+            return loaded;
         }
         catch (...)
         {
+            std::cerr << "DEBUG [ModelIsLoaded]: Exception caught, returning false" << std::endl;
             return false;
         }
     }
 
     bool ModelInfer(ModelHandle handle, const TensorData *inputs, int num_inputs, TensorData *outputs, int num_outputs, ErrorMessage *error)
     {
+        std::cerr << "DEBUG [ModelInfer]: Called with handle " << static_cast<void *>(handle)
+                  << ", num_inputs=" << num_inputs << ", num_outputs=" << num_outputs << std::endl;
+
+        if (!handle)
+        {
+            if (error)
+                *error = strdup_helper("Invalid model handle");
+            std::cerr << "DEBUG [ModelInfer]: Invalid model handle" << std::endl;
+            return false;
+        }
+
+        // Check if model is loaded
+        bool isLoaded = handle->model->IsLoaded();
+        std::cerr << "DEBUG [ModelInfer]: Model->IsLoaded() = " << (isLoaded ? "true" : "false") << std::endl;
+
+        if (!isLoaded)
+        {
+            if (error)
+                *error = strdup_helper("Model not loaded");
+            std::cerr << "DEBUG [ModelInfer]: Returning error - Model not loaded" << std::endl;
+            return false;
+        }
+        
         if (!handle || !inputs || num_inputs <= 0 || !outputs || num_outputs <= 0)
         {
             if (error)
