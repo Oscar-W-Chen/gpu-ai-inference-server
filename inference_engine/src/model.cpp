@@ -630,6 +630,23 @@ namespace inference
 
         bool ValidateInputs(const std::vector<Tensor> &inputs)
         {
+            std::cerr << "DEBUG [ValidateInputs]: Config has " << config_.input_names.size()
+                      << " inputs, received " << inputs.size() << " inputs" << std::endl;
+
+            std::cerr << "DEBUG [ValidateInputs]: Config inputs: ";
+            for (const auto &name : config_.input_names)
+            {
+                std::cerr << name << " ";
+            }
+            std::cerr << std::endl;
+
+            std::cerr << "DEBUG [ValidateInputs]: Received inputs: ";
+            for (const auto &tensor : inputs)
+            {
+                std::cerr << tensor.GetName() << " ";
+            }
+            std::cerr << std::endl;
+
             // Check input count
             if (inputs.size() != config_.input_names.size())
             {
@@ -722,9 +739,13 @@ namespace inference
         bool LoadONNXModel()
         {
             std::cerr << "DEBUG [LoadONNXModel]: Starting ONNX model loading at " << this << std::endl;
-            // Add a memory address indicator for debugging
-            std::cerr << "DEBUG [LoadONNXModel]: Address of loaded_ = " << &loaded_ << std::endl;
+            std::cerr << "DEBUG [LoadONNXModel]: Model config: name=" << config_.name
+                      << ", input_names.size=" << config_.input_names.size() << std::endl;
 
+            if (!config_.input_names.empty())
+            {
+                std::cerr << "DEBUG [LoadONNXModel]: First input name: " << config_.input_names[0] << std::endl;
+            }
             try
             {
                 // Construct the full path to the ONNX file
