@@ -255,26 +255,35 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 	modelKey := getModelKey(modelName, version)
 	log.Printf("DEBUG: Model successfully loaded, creating model key: %s", modelKey)
 
-	// Create model config to use for creating the model
-	config := ModelConfig{
-		Name:    modelName,
-		Version: version,
-	}
-
-	// Create the model
-	log.Printf("DEBUG: Creating model handle via createModelInternal")
-	model, err := createModelInternal(modelName, config, DeviceGPU, 0)
-	if err != nil {
-		log.Printf("DEBUG: Failed to create model handle: %v", err)
-		return fmt.Errorf("model loaded in server but failed to create local handle: %v", err)
-	}
-	log.Printf("DEBUG: Model handle created successfully: %p", model.handle)
-
-	// Store it in our map
+	// Get a reference to the already loaded model instead of creating a new one
 	im.loadedModelsMutex.Lock()
+	defer im.loadedModelsMutex.Unlock()
+
+	// Create a model reference that points to the already loaded model
+	model := &Model{
+		name:    modelName,
+		version: version,
+	}
+
+	// Get a handle to the already-loaded model
+	var getHandleError C.ErrorMessage
+	modelHandle := C.GetModelHandle(im.handle, cModelName, cVersion, &getHandleError)
+	if modelHandle == nil {
+		var err error
+		if getHandleError != nil {
+			err = errors.New(C.GoString(getHandleError))
+			C.FreeErrorMessage(getHandleError)
+		} else {
+			err = errors.New("failed to get model handle")
+		}
+		log.Printf("DEBUG: Failed to get handle for loaded model: %v", err)
+		return fmt.Errorf("model loaded in server but failed to get handle: %v", err)
+	}
+
+	log.Printf("DEBUG: Got handle to loaded model: %p", modelHandle)
+	model.handle = modelHandle
 	im.loadedModels[modelKey] = model
 	log.Printf("DEBUG: Model added to loadedModels map with key: %s", modelKey)
-	im.loadedModelsMutex.Unlock()
 
 	return nil
 }

@@ -144,6 +144,8 @@ bool TensorToCPU(TensorHandle handle, ErrorMessage* error);
 
 // Utility functions
 void FreeErrorMessage(ErrorMessage error);
+// Add to inference_bridge.h
+ModelHandle GetModelHandle(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error);
 
 #ifdef __cplusplus
 }

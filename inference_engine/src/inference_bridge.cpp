@@ -666,7 +666,7 @@ extern "C"
             std::cerr << "DEBUG [ModelInfer]: Returning error - Model not loaded" << std::endl;
             return false;
         }
-        
+
         if (!handle || !inputs || num_inputs <= 0 || !outputs || num_outputs <= 0)
         {
             if (error)
@@ -1151,4 +1151,84 @@ extern "C"
     {
         free(error);
     }
+
+    ModelHandle GetModelHandle(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error)
+{
+    if (!handle || !model_name)
+    {
+        if (error)
+            *error = strdup_helper("Invalid handle or model name");
+        return nullptr;
+    }
+
+    try
+    {
+        std::cerr << "DEBUG [GetModelHandle]: Getting handle for model " << model_name 
+                  << ", version " << (version ? version : "latest") << std::endl;
+                  
+        // Find the model in the loaded models map
+        auto it = handle->models.find(model_name);
+        if (it == handle->models.end())
+        {
+            std::cerr << "DEBUG [GetModelHandle]: Model not found in loaded models map" << std::endl;
+            if (error)
+                *error = strdup_helper("Model not found in loaded models");
+            return nullptr;
+        }
+        
+        std::cerr << "DEBUG [GetModelHandle]: Found model in map, creating handle" << std::endl;
+        
+        // Instead of changing ownership, create a clone of the model
+        std::string model_path = it->second->GetMetadata().name;
+        if (version && version[0] != '\0') {
+            model_path = model_path + "/" + version;
+        }
+        
+        // Create a full path
+        std::string full_path = handle->model_repository_path + "/" + model_path;
+        
+        std::cerr << "DEBUG [GetModelHandle]: Using full path: " << full_path << std::endl;
+        
+        // Get model config from the original model
+        inference::ModelConfig config;
+        config.name = it->second->GetMetadata().name;
+        config.version = it->second->GetMetadata().version;
+        config.type = it->second->GetMetadata().type;
+        
+        // Create a new model instance that references the same model files
+        auto new_model = std::make_unique<inference::Model>(
+            full_path,
+            config.type,
+            config,
+            inference::DeviceType::GPU,
+            0
+        );
+        
+        // Load the model
+        if (!new_model->Load()) {
+            std::string err_msg = new_model->GetLastError();
+            std::cerr << "DEBUG [GetModelHandle]: Failed to load model: " << err_msg << std::endl;
+            if (error)
+                *error = strdup_helper(err_msg.c_str());
+            return nullptr;
+        }
+        
+        Model_t* model_handle = new Model_t(std::move(new_model));
+        
+        std::cerr << "DEBUG [GetModelHandle]: Created new handle: " << static_cast<void*>(model_handle) << std::endl;
+        
+        // Verify the model is loaded
+        bool isLoaded = model_handle->model->IsLoaded();
+        std::cerr << "DEBUG [GetModelHandle]: Model loaded state: " << (isLoaded ? "true" : "false") << std::endl;
+        
+        return model_handle;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "DEBUG [GetModelHandle]: Exception: " << e.what() << std::endl;
+        if (error)
+            *error = strdup_helper(e.what());
+        return nullptr;
+    }
+}
 }
