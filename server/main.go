@@ -682,7 +682,7 @@ func processOutputs(outputs []binding.TensorData, outputConfigs []OutputConfig) 
 	for _, output := range outputs {
 		outputMap := map[string]interface{}{
 			"name":      output.Name,
-			"data_type": output.DataType,
+			"data_type": dataTypeToString(output.DataType),
 			"shape":     output.Shape.Dims,
 			"data":      output.Data,
 		}
@@ -803,6 +803,30 @@ func convertToFloat32Array(data interface{}) ([]float32, error) {
 	}
 
 	return floatArray, nil
+}
+
+// Helper function to convert DataType enum to string
+func dataTypeToString(dataType binding.DataType) string {
+	switch dataType {
+	case binding.DataTypeFloat32:
+		return "FLOAT32"
+	case binding.DataTypeInt32:
+		return "INT32"
+	case binding.DataTypeInt64:
+		return "INT64"
+	case binding.DataTypeUint8:
+		return "UINT8"
+	case binding.DataTypeInt8:
+		return "INT8"
+	case binding.DataTypeString:
+		return "STRING"
+	case binding.DataTypeBool:
+		return "BOOL"
+	case binding.DataTypeFP16:
+		return "FP16"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 //===========================================================
