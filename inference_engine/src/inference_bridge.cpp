@@ -25,9 +25,19 @@ struct InferenceManager_t
 // Bridge class for Model
 struct Model_t
 {
-    std::unique_ptr<inference::Model> model;
+    std::unique_ptr<inference::Model> owned_model;
+    inference::Model* model;  // May point to owned_model.get() or an external model
 
-    Model_t(std::unique_ptr<inference::Model> m) : model(std::move(m)) {}
+    // Constructor for owned model
+    Model_t(std::unique_ptr<inference::Model> m) : owned_model(std::move(m)), model(owned_model.get()) {}
+    
+    // Constructor for non-owned model reference
+    Model_t(std::nullptr_t) : owned_model(nullptr), model(nullptr) {}
+    
+    // Destructor only deletes if we own the model
+    ~Model_t() {
+        // owned_model's destructor will handle deletion if needed
+    }
 };
 
 // Bridge class for Tensor
@@ -1152,6 +1162,7 @@ extern "C"
         free(error);
     }
 
+    // Corrected GetModelHandle function in inference_bridge.cpp
     ModelHandle GetModelHandle(InferenceManagerHandle handle, const char *model_name, const char *version, ErrorMessage *error)
     {
         if (!handle || !model_name)
@@ -1163,79 +1174,27 @@ extern "C"
 
         try
         {
-            std::cerr << "DEBUG [GetModelHandle]: Getting handle for model " << model_name
-                      << ", version " << (version ? version : "latest") << std::endl;
-
             // Find the model in the loaded models map
             auto it = handle->models.find(model_name);
             if (it == handle->models.end())
             {
-                std::cerr << "DEBUG [GetModelHandle]: Model not found in loaded models map" << std::endl;
                 if (error)
                     *error = strdup_helper("Model not found in loaded models");
                 return nullptr;
             }
 
-            std::cerr << "DEBUG [GetModelHandle]: Found model in map, creating handle" << std::endl;
+            // Create a wrapper Model_t that doesn't own the model
+            // but references the existing one
+            Model_t *model_handle = new Model_t(nullptr);
 
-            // Instead of changing ownership, create a clone of the model
-            std::string model_path = it->second->GetMetadata().name;
-            if (version && version[0] != '\0')
-            {
-                model_path = model_path + "/" + version;
-            }
-
-            // Create a full path
-            std::string full_path = handle->model_repository_path + "/" + model_path;
-
-            std::cerr << "DEBUG [GetModelHandle]: Using full path: " << full_path << std::endl;
-
-            // Get model config from the original model
-            inference::ModelConfig config;
-            config.name = it->second->GetMetadata().name;
-            config.version = it->second->GetMetadata().version;
-            config.type = it->second->GetMetadata().type;
-
-            std::cerr << "DEBUG [GetModelHandle]: Model config: name=" << config.name
-                      << ", input_names.size=" << config.input_names.size() << std::endl;
-
-            // Create a new model instance that references the same model files
-            auto new_model = std::make_unique<inference::Model>(
-                full_path,
-                config.type,
-                config,
-                inference::DeviceType::GPU,
-                0);
-
-            // After creating the new model:
-            std::cerr << "DEBUG [GetModelHandle]: Checking new model metadata after creation" << std::endl;
-            inference::ModelMetadata metadata = new_model->GetMetadata();
-            std::cerr << "DEBUG [GetModelHandle]: New model metadata: inputs=" << metadata.inputs.size()
-                      << ", outputs=" << metadata.outputs.size() << std::endl;
-
-            // Load the model
-            if (!new_model->Load())
-            {
-                std::string err_msg = new_model->GetLastError();
-                std::cerr << "DEBUG [GetModelHandle]: Failed to load model: " << err_msg << std::endl;
-                if (error)
-                    *error = strdup_helper(err_msg.c_str());
-                return nullptr;
-            }
-
-            Model_t *model_handle = new Model_t(std::move(new_model));
-
-            std::cerr << "DEBUG [GetModelHandle]: Created new handle: " << static_cast<void *>(model_handle) << std::endl;
-
-            // Verify the model is loaded
-            bool isLoaded = model_handle->model->IsLoaded();
-            std::cerr << "DEBUG [GetModelHandle]: Model loaded state: " << (isLoaded ? "true" : "false") << std::endl;
+            // Directly assign the model pointer to handle's model member
+            // This bypasses unique_ptr ownership issues
+            model_handle->model = it->second.get();
 
             return model_handle;
         }
         catch (const std::exception &e)
         {
-            std::cerr << "DEBUG [GetModelHandle]: Exception: " << e.what() << std::endl;
             if (error)
                 *error = strdup_helper(e.what());
             return nullptr;

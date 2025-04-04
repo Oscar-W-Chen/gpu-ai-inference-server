@@ -630,11 +630,12 @@ namespace inference
 
         bool ValidateInputs(const std::vector<Tensor> &inputs)
         {
+            /*
             // Temporarily bypass validation to get things working
             std::cerr << "DEBUG [ValidateInputs]: Bypassing input validation - received "
                       << inputs.size() << " inputs" << std::endl;
             return true;
-            /*
+            */
             std::cerr << "DEBUG [ValidateInputs]: Config has " << config_.input_names.size()
                       << " inputs, received " << inputs.size() << " inputs" << std::endl;
 
@@ -710,7 +711,7 @@ namespace inference
             }
 
             return true;
-            */
+            
         }
 
         // Model-specific implementation placeholders
