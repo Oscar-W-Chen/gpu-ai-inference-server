@@ -107,11 +107,13 @@ Comprehensive API documentation is available in [docs/api.md](docs/api.md)
 
 ## 🧩 Roadmap
 
-- [ ] Complete multi-framework model support
-- [ ] Enhanced monitoring and logging
-- [ ] Advanced batching strategies
-- [ ] Kubernetes deployment support
-- [ ] Continuous performance optimization
+ - [x] Fully implement ModelRepository and integrate it with the code stack
+ - [x] Fully implement the model specific loading, inferencing, and unloading logic for ONNX
+ - [x] Put API.md on homepage
+ - [x] Restructure main.go to use singleton inference manager throughout the server session 
+ - [x] Remove unnecessary DEBUG messages
+ - [x] Put complete model files under /model directory to test loading functions
+ - [ ] Run full end-to-end integration test on AI inferencing on top of GPUs
 
 ## 🤝 Contributing
 
