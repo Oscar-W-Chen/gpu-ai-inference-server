@@ -10,7 +10,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"log"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -115,6 +114,7 @@ type Tensor struct {
 	handle C.TensorHandle
 }
 
+// MemoryInfo represents memory information for a GPU device
 type MemoryInfo struct {
 	Total uint64
 	Free  uint64
@@ -129,8 +129,6 @@ type OutputConfig struct {
 	DataType      string
 	LabelFilename string
 }
-
-// CUDA utility functions
 
 // IsCUDAAvailable checks if CUDA is available on the system
 func IsCUDAAvailable() bool {
@@ -171,9 +169,11 @@ func GetMemoryInfo(deviceID int) (MemoryInfo, error) {
 	return info, nil
 }
 
-// InferenceManager functions
-
 // NewInferenceManager initializes the inference manager
+//
+// This creates a new inference manager that will manage models in the provided
+// model repository path. The manager handles loading, unloading, and inference
+// for models.
 func NewInferenceManager(modelRepositoryPath string) (*InferenceManager, error) {
 	cModelRepositoryPath := C.CString(modelRepositoryPath)
 	defer C.free(unsafe.Pointer(cModelRepositoryPath))
@@ -191,7 +191,7 @@ func NewInferenceManager(modelRepositoryPath string) (*InferenceManager, error) 
 	return manager, nil
 }
 
-// Shutdown shuts down the inference manager
+// Shutdown shuts down the inference manager and releases all resources
 func (im *InferenceManager) Shutdown() {
 	im.loadedModelsMutex.Lock()
 	defer im.loadedModelsMutex.Unlock()
@@ -220,8 +220,11 @@ func getModelKey(modelName, version string) string {
 }
 
 // LoadModel loads a model into the inference server
+//
+// Loads the specified model and version into memory. If version is empty,
+// the latest version will be loaded. After successful loading, the model
+// will be available for inference.
 func (im *InferenceManager) LoadModel(modelName, version string) error {
-	log.Printf("DEBUG: LoadModel called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return errors.New("inference manager not initialized")
 	}
@@ -236,9 +239,7 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 	}
 
 	var cError C.ErrorMessage
-	log.Printf("DEBUG: Calling C.InferenceLoadModel for %s:%s", modelName, version)
 	success := C.InferenceLoadModel(im.handle, cModelName, cVersion, &cError)
-	log.Printf("DEBUG: C.InferenceLoadModel returned: success=%v", success)
 	if !success {
 		var err error
 		if cError != nil {
@@ -247,13 +248,11 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 		} else {
 			err = errors.New("failed to load model")
 		}
-		log.Printf("DEBUG: LoadModel failed with error: %v", err)
 		return err
 	}
 
 	// After successful loading, create a Model instance and add to our map
 	modelKey := getModelKey(modelName, version)
-	log.Printf("DEBUG: Model successfully loaded, creating model key: %s", modelKey)
 
 	// Get a reference to the already loaded model instead of creating a new one
 	im.loadedModelsMutex.Lock()
@@ -276,19 +275,20 @@ func (im *InferenceManager) LoadModel(modelName, version string) error {
 		} else {
 			err = errors.New("failed to get model handle")
 		}
-		log.Printf("DEBUG: Failed to get handle for loaded model: %v", err)
 		return fmt.Errorf("model loaded in server but failed to get handle: %v", err)
 	}
 
-	log.Printf("DEBUG: Got handle to loaded model: %p", modelHandle)
 	model.handle = modelHandle
 	im.loadedModels[modelKey] = model
-	log.Printf("DEBUG: Model added to loadedModels map with key: %s", modelKey)
 
 	return nil
 }
 
 // UnloadModel unloads a model from the inference server
+//
+// Unloads the specified model and version from memory. If version is empty,
+// the latest loaded version will be unloaded. After unloading, the model
+// will no longer be available for inference.
 func (im *InferenceManager) UnloadModel(modelName, version string) error {
 	if im.handle == nil {
 		return errors.New("inference manager not initialized")
@@ -333,6 +333,10 @@ func (im *InferenceManager) UnloadModel(modelName, version string) error {
 }
 
 // IsModelLoaded checks if a model is loaded
+//
+// Returns true if the specified model and version is currently loaded and
+// ready for inference. If version is empty, checks if any version of the
+// model is loaded.
 func (im *InferenceManager) IsModelLoaded(modelName, version string) bool {
 	if im.handle == nil {
 		return false
@@ -351,6 +355,9 @@ func (im *InferenceManager) IsModelLoaded(modelName, version string) bool {
 }
 
 // ListModels lists all available models
+//
+// Returns a list of all model names available in the model repository,
+// regardless of whether they are currently loaded or not.
 func (im *InferenceManager) ListModels() []string {
 	if im.handle == nil {
 		return nil
@@ -373,32 +380,31 @@ func (im *InferenceManager) ListModels() []string {
 }
 
 // GetModel gets a reference to an already loaded model
+//
+// Returns a Model object representing the specified model name and version,
+// if it is already loaded. If version is empty, gets the latest loaded version.
+// Returns an error if the model is not loaded.
 func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) {
-	log.Printf("DEBUG: GetModel called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return nil, errors.New("inference manager not initialized")
 	}
 
 	// Check if the model is loaded in the server
 	isLoaded := im.IsModelLoaded(modelName, version)
-	log.Printf("DEBUG: IsModelLoaded returned: %v", isLoaded)
 	if !isLoaded {
 		return nil, fmt.Errorf("model '%s:%s' is not loaded", modelName, version)
 	}
 
 	// Lookup in our local map
 	modelKey := getModelKey(modelName, version)
-	log.Printf("DEBUG: Looking up model with key: %s", modelKey)
 
 	im.loadedModelsMutex.RLock()
 	model, exists := im.loadedModels[modelKey]
 	im.loadedModelsMutex.RUnlock()
 
-	log.Printf("DEBUG: Model exists in map: %v, model handle: %p", exists, model)
 	if !exists {
 		// If we don't have it in our map but it's loaded in the server,
 		// create a new local model handle and add it to our map
-		log.Printf("DEBUG: Model not found in map, creating new handle")
 		config := ModelConfig{
 			Name:    modelName,
 			Version: version,
@@ -407,15 +413,12 @@ func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) 
 		var err error
 		model, err = createModelInternal(modelName, config, DeviceGPU, 0)
 		if err != nil {
-			log.Printf("DEBUG: Failed to create new model handle: %v", err)
 			return nil, fmt.Errorf("failed to get handle for loaded model: %v", err)
 		}
-		log.Printf("DEBUG: Created new model handle: %p", model.handle)
 
 		// Add to our map
 		im.loadedModelsMutex.Lock()
 		im.loadedModels[modelKey] = model
-		log.Printf("DEBUG: Added new model handle to map with key: %s", modelKey)
 		im.loadedModelsMutex.Unlock()
 	}
 
@@ -423,32 +426,27 @@ func (im *InferenceManager) GetModel(modelName, version string) (*Model, error) 
 }
 
 // RunInference executes inference using a loaded model
+//
+// Runs inference on the specified model and version using the provided input tensors.
+// The output configurations specify the expected outputs. Returns the resulting
+// output tensors or an error if inference fails.
 func (im *InferenceManager) RunInference(modelName string, version string, inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
-	log.Printf("DEBUG: RunInference called for model %s version %s", modelName, version)
 	if im.handle == nil {
 		return nil, errors.New("inference manager not initialized")
 	}
 
 	// Get reference to the already loaded model
-	log.Printf("DEBUG: Getting model for inference")
 	model, err := im.GetModel(modelName, version)
 	if err != nil {
-		log.Printf("DEBUG: Failed to get model for inference: %v", err)
 		return nil, fmt.Errorf("failed to get model for inference: %v", err)
 	}
-	log.Printf("DEBUG: Got model handle: %p", model.handle)
 
 	// Run inference using the existing model, passing output configurations
-	log.Printf("DEBUG: Calling model.Infer with %d inputs and %d output configs", len(inputs), len(outputConfigs))
 	return model.Infer(inputs, outputConfigs)
 }
 
-// Model functions
-
 // createModelInternal creates a model handle for an already loaded model
 func createModelInternal(modelPath string, config ModelConfig, deviceType DeviceType, deviceID int) (*Model, error) {
-	log.Printf("DEBUG: createModelInternal called for path %s", modelPath)
-
 	cModelPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cModelPath))
 
@@ -512,48 +510,27 @@ func createModelInternal(modelPath string, config ModelConfig, deviceType Device
 		name:    config.Name,
 		version: config.Version,
 	}
-	log.Printf("DEBUG: Created new Model instance with handle: %p", model.handle)
 	return model, nil
 }
 
-// Destroy destroys a model instance
-func (m *Model) Destroy() {
-	if m.handle != nil {
-		C.ModelDestroy(m.handle)
-		m.handle = nil
-	}
-}
-
-// Runs Inference on the model
+// Infer runs inference on the model
+//
+// Executes inference using this model with the provided input tensors.
+// The output configurations specify the expected outputs. Returns the
+// resulting output tensors or an error if inference fails.
 func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]TensorData, error) {
-	log.Printf("DEBUG: Model.Infer called on model handle: %p", m.handle)
 	if m.handle == nil {
 		return nil, errors.New("model not initialized")
 	}
 
 	// Check if model is loaded by directly calling C function
-	log.Printf("DEBUG: Checking if model is loaded via C.ModelIsLoaded")
 	isLoaded := bool(C.ModelIsLoaded(m.handle))
-	log.Printf("DEBUG: C.ModelIsLoaded returned: %v", isLoaded)
 	if !isLoaded {
 		return nil, errors.New("model not loaded")
 	}
 
 	if len(inputs) == 0 {
 		return nil, errors.New("no input tensors provided")
-	}
-
-	// Debug logging for inputs
-	for i, input := range inputs {
-		fmt.Printf("Input tensor %d: name=%s, shape=%v, dataType=%d\n",
-			i, input.Name, input.Shape.Dims, input.DataType)
-	}
-
-	// Debug logging for outputs
-	fmt.Println("Output configurations:")
-	for i, outConfig := range outputConfigs {
-		fmt.Printf("Output %d: name=%s, shape=%v, dataType=%s\n",
-			i, outConfig.Name, outConfig.Shape, outConfig.DataType)
 	}
 
 	// Create output tensor objects based on outputConfigs
@@ -580,7 +557,6 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 				elements *= dim
 			}
 			outputData = make([]float32, elements)
-			fmt.Printf("Created output buffer for '%s' with %d elements\n", outConfig.Name, elements)
 		default:
 			return nil, fmt.Errorf("unsupported data type '%s' for output '%s'", outConfig.DataType, outConfig.Name)
 		}
@@ -757,41 +733,32 @@ func (m *Model) Infer(inputs []TensorData, outputConfigs []OutputConfig) ([]Tens
 	return outputs, nil
 }
 
-// Note: This function replaces the previous runModelInfer, so you can remove that function
-
 // GetMetadata gets metadata about the model
+//
+// Returns model metadata including name, version, input/output names, and more.
 func (m *Model) GetMetadata() (*ModelMetadata, error) {
 	if m.handle == nil {
-		fmt.Println("DEBUG: GetMetadata - model handle is nil")
 		return nil, errors.New("model not initialized")
 	}
 
-	fmt.Println("DEBUG: GetMetadata - calling C.ModelGetMetadata")
 	cMetadata := C.ModelGetMetadata(m.handle)
 	if cMetadata == nil {
-		fmt.Println("DEBUG: GetMetadata - C.ModelGetMetadata returned nil")
 		return nil, errors.New("failed to get model metadata")
 	}
-	fmt.Printf("DEBUG: GetMetadata - C.ModelGetMetadata returned successfully: num_inputs=%d, num_outputs=%d\n",
-		cMetadata.num_inputs, cMetadata.num_outputs)
 	defer C.ModelFreeMetadata(cMetadata)
 
 	// Convert inputs
 	inputs := make([]string, int(cMetadata.num_inputs))
-	fmt.Printf("DEBUG: GetMetadata - Processing %d inputs\n", int(cMetadata.num_inputs))
 	for i := 0; i < int(cMetadata.num_inputs); i++ {
 		cInput := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetadata.inputs)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
 		inputs[i] = C.GoString(cInput)
-		fmt.Printf("DEBUG: GetMetadata - Input %d: %s\n", i, inputs[i])
 	}
 
 	// Convert outputs
 	outputs := make([]string, int(cMetadata.num_outputs))
-	fmt.Printf("DEBUG: GetMetadata - Processing %d outputs\n", int(cMetadata.num_outputs))
 	for i := 0; i < int(cMetadata.num_outputs); i++ {
 		cOutput := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(cMetadata.outputs)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
 		outputs[i] = C.GoString(cOutput)
-		fmt.Printf("DEBUG: GetMetadata - Output %d: %s\n", i, outputs[i])
 	}
 
 	metadata := &ModelMetadata{
@@ -804,13 +771,12 @@ func (m *Model) GetMetadata() (*ModelMetadata, error) {
 		LoadTimeNs:  int64(cMetadata.load_time_ns),
 	}
 
-	fmt.Printf("DEBUG: GetMetadata - Returning metadata: Name=%s, Version=%s, Type=%d, Inputs=%v, Outputs=%v\n",
-		metadata.Name, metadata.Version, metadata.Type, metadata.Inputs, metadata.Outputs)
-
 	return metadata, nil
 }
 
 // GetStats gets statistics about the model
+//
+// Returns statistics about the model, including inference counts and timing.
 func (m *Model) GetStats() (*ModelStats, error) {
 	if m.handle == nil {
 		return nil, errors.New("model not initialized")

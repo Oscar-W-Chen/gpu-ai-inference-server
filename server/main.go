@@ -30,6 +30,8 @@ const (
 	ServerLogPrefix     = "[SERVER] "
 )
 
+// main is the entry point for the GPU AI Inference Server.
+// It sets up logging and launches the server.
 func main() {
 	setupLogging()
 
@@ -41,12 +43,14 @@ func main() {
 	}
 }
 
+// setupLogging configures the application's logging format.
 func setupLogging() {
 	log.SetFlags(log.Ldate | log.Ltime)
 	log.SetPrefix(ServerLogPrefix)
 }
 
-// serveHome serves the default HTML page with API docs
+// serveHome serves the default HTML page with API documentation.
+// It renders the API documentation from Markdown into HTML.
 func serveHome(c *gin.Context) {
 	// Try to read the API documentation markdown file
 	apiDocsPath := "./docs/api.md"
@@ -116,7 +120,8 @@ func serveHome(c *gin.Context) {
     `))
 }
 
-// getHealth returns the health status of the server
+// getHealth returns the health status of the server.
+// Returns a 200 status code with a JSON response containing the status and current time.
 func getHealth(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, gin.H{
 		"status": "healthy",
@@ -124,7 +129,8 @@ func getHealth(c *gin.Context) {
 	})
 }
 
-// getCUDAInfo returns if CUDA is available and the device counts
+// getCUDAInfo returns if CUDA is available and the device counts.
+// It creates a closure function that returns a handler for the CUDA info endpoint.
 func getCUDAInfo(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.IndentedJSON(http.StatusOK, gin.H{
@@ -134,7 +140,8 @@ func getCUDAInfo(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	}
 }
 
-// getDevices gets individual device info
+// getDevices gets individual device info for all available CUDA devices.
+// It creates a closure function that returns a handler for the devices endpoint.
 func getDevices(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if cudaAvailable {
@@ -149,7 +156,8 @@ func getDevices(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	}
 }
 
-// GetGPUMemory checks GPU memory usage, which is important for model management
+// GetGPUMemory checks GPU memory usage, which is important for model management.
+// It creates a closure function that returns a handler for the GPU memory endpoint.
 func GetGPUMemory(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cudaAvailable {
@@ -178,7 +186,8 @@ func GetGPUMemory(cudaAvailable bool, deviceCount int) gin.HandlerFunc {
 	}
 }
 
-// GetModels list the models in the repository directory
+// GetModels lists all models available in the repository directory.
+// It returns details about each model, including whether it's currently loaded.
 func GetModels(c *gin.Context) {
 	// List available models
 	modelNames := inferenceManager.ListModels()
@@ -206,7 +215,8 @@ func GetModels(c *gin.Context) {
 	})
 }
 
-// LoadModel loads a model from the repository
+// LoadModel loads a model from the repository.
+// It accepts model name from the URL path and optional version from query parameters.
 func LoadModel(c *gin.Context) {
 	// Get model name from URL
 	modelName := c.Param("name")
@@ -267,7 +277,7 @@ func LoadModel(c *gin.Context) {
 
 	// Check if model is already loaded
 	if inferenceManager.IsModelLoaded(modelName, versionToUse) {
-		log.Printf("Debug: Model '%s' version '%s' is already loaded", modelName, versionToUse)
+		log.Printf("Model '%s' version '%s' is already loaded", modelName, versionToUse)
 		c.IndentedJSON(http.StatusOK, gin.H{
 			"message": "Model already loaded",
 			"name":    modelName,
@@ -290,7 +300,8 @@ func LoadModel(c *gin.Context) {
 	})
 }
 
-// UnloadModel unloads a model from the server
+// UnloadModel unloads a model from the server.
+// It accepts model name from the URL path and optional version from query parameters.
 func UnloadModel(c *gin.Context) {
 	// Get model name from URL
 	modelName := c.Param("name")
@@ -352,7 +363,8 @@ func UnloadModel(c *gin.Context) {
 	})
 }
 
-// GetModelStatus gets detailed status information about a specific model
+// GetModelStatus gets detailed status information about a specific model.
+// It accepts model name from the URL path and optional version from query parameters.
 func GetModelStatus(c *gin.Context) {
 	// Get model name from URL
 	modelName := c.Param("name")
@@ -434,10 +446,9 @@ func GetModelStatus(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, modelStatus)
 }
 
-//The following functions are related to the actual model inferencing
-//===================================================================
-
-// RunInference handles inference requests for a model
+// RunInference handles inference requests for a model.
+// It accepts model name from the URL path and optional version from query parameters.
+// The request body should contain input tensor data.
 func RunInference(c *gin.Context) {
 	// Get model name and version from URL/query parameters.
 	modelName := c.Param("name")
@@ -470,8 +481,6 @@ func RunInference(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Model config loaded successfully: %+v", modelConfig)
-
 	// Parse the request body for inputs.
 	var request struct {
 		Inputs map[string]interface{} `json:"inputs"`
@@ -482,7 +491,6 @@ func RunInference(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Received inputs: %+v", request.Inputs)
 	if len(request.Inputs) == 0 {
 		log.Print("No inputs provided in request")
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": "No inputs provided"})
@@ -501,8 +509,6 @@ func RunInference(c *gin.Context) {
 			return
 		}
 
-		log.Printf("Processing input '%s' with data type '%s'", inputConfig.Name, inputConfig.DataType)
-
 		// Determine shape.
 		var shape []int64
 		if len(inputConfig.Shape) > 0 {
@@ -516,8 +522,6 @@ func RunInference(c *gin.Context) {
 			})
 			return
 		}
-
-		log.Printf("Input shape: %v", shape)
 
 		// Convert the input data to the proper format (float32 only in this example).
 		var data interface{}
@@ -533,7 +537,7 @@ func RunInference(c *gin.Context) {
 				})
 				return
 			}
-			log.Printf("Converted data for '%s': length=%d", inputConfig.Name, len(floatData))
+
 			// Verify expected element count.
 			expectedElementCount := int64(1)
 			for _, dim := range shape {
@@ -566,8 +570,6 @@ func RunInference(c *gin.Context) {
 		inputs = append(inputs, tensor)
 	}
 
-	log.Printf("Created %d input tensors, calling inference engine", len(inputs))
-
 	// Convert output configs from model configuration.
 	outputConfigs := make([]binding.OutputConfig, len(modelConfig.Outputs))
 	for i, outConfig := range modelConfig.Outputs {
@@ -590,7 +592,6 @@ func RunInference(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Inference succeeded, processing %d outputs", len(outputs))
 	responseOutputs := processOutputs(outputs, modelConfig.Outputs)
 	c.IndentedJSON(http.StatusOK, gin.H{
 		"model_name":    modelName,
@@ -600,7 +601,7 @@ func RunInference(c *gin.Context) {
 	log.Printf("Inference response sent successfully")
 }
 
-// Model configuration structure
+// ModelConfig defines the structure of a model's configuration.
 type ModelConfig struct {
 	Name    string         `json:"name"`
 	Version string         `json:"version"`
@@ -608,6 +609,7 @@ type ModelConfig struct {
 	Outputs []OutputConfig `json:"outputs"`
 }
 
+// InputConfig defines the structure of a model input configuration.
 type InputConfig struct {
 	Name     string  `json:"name"`
 	Dims     []int64 `json:"dims"`
@@ -615,6 +617,7 @@ type InputConfig struct {
 	DataType string  `json:"data_type"`
 }
 
+// OutputConfig defines the structure of a model output configuration.
 type OutputConfig struct {
 	Name          string  `json:"name"`
 	Dims          []int64 `json:"dims"`
@@ -623,7 +626,8 @@ type OutputConfig struct {
 	LabelFilename string  `json:"label_filename,omitempty"`
 }
 
-// Load model configuration from config.json
+// loadModelConfig loads the model configuration from the config.json file.
+// If version is empty, it will attempt to find and use the latest version.
 func loadModelConfig(modelName, version string) (*ModelConfig, error) {
 	modelPath := filepath.Join(ModelRepositoryPath, modelName)
 
@@ -669,7 +673,8 @@ func loadModelConfig(modelName, version string) (*ModelConfig, error) {
 	return &config, nil
 }
 
-// Process output tensors and include classification labels if available
+// processOutputs processes the output tensors and includes classification labels if available.
+// It returns a slice of maps, each map containing the output tensor data and metadata.
 func processOutputs(outputs []binding.TensorData, outputConfigs []OutputConfig) []map[string]interface{} {
 	responseOutputs := make([]map[string]interface{}, 0, len(outputs))
 
@@ -707,7 +712,8 @@ func processOutputs(outputs []binding.TensorData, outputConfigs []OutputConfig) 
 	return responseOutputs
 }
 
-// Load label file for classification outputs
+// loadLabelFile loads and parses a label file for classification outputs.
+// It returns a slice of strings, each string being a label.
 func loadLabelFile(outputName, labelFilename string) ([]string, error) {
 	// Try to find the label file in the model directory
 	labelPath := filepath.Join(ModelRepositoryPath, labelFilename)
@@ -733,7 +739,8 @@ func loadLabelFile(outputName, labelFilename string) ([]string, error) {
 	return cleanLabels, nil
 }
 
-// Find top N classes from classification results
+// findTopClasses finds the top N classes from classification results.
+// It returns a slice of maps, each map containing the class index, probability, and label.
 func findTopClasses(probabilities []float32, labels []string, topN int) []map[string]interface{} {
 	// Create pairs of (index, probability)
 	type indexProb struct {
@@ -778,7 +785,7 @@ func findTopClasses(probabilities []float32, labels []string, topN int) []map[st
 	return results
 }
 
-// Helper function to check if a string is numeric
+// isNumeric checks if a string consists only of numeric characters.
 func isNumeric(s string) bool {
 	for _, c := range s {
 		if c < '0' || c > '9' {
@@ -788,8 +795,8 @@ func isNumeric(s string) bool {
 	return len(s) > 0
 }
 
-// Helper functions to convert input data
-// Convert interface{} to []float32
+// convertToFloat32Array converts an interface{} to []float32.
+// It uses JSON marshaling to handle various number formats.
 func convertToFloat32Array(data interface{}) ([]float32, error) {
 	// Marshal and unmarshal to convert various number formats to float32
 	jsonData, err := json.Marshal(data)
@@ -805,7 +812,7 @@ func convertToFloat32Array(data interface{}) ([]float32, error) {
 	return floatArray, nil
 }
 
-// Helper function to convert DataType enum to string
+// dataTypeToString converts a DataType enum to its string representation.
 func dataTypeToString(dataType binding.DataType) string {
 	switch dataType {
 	case binding.DataTypeFloat32:
@@ -829,9 +836,8 @@ func dataTypeToString(dataType binding.DataType) string {
 	}
 }
 
-//===========================================================
-
-// creates a singleton inference manager
+// InitializeInferenceManager creates a singleton inference manager.
+// It creates the model repository directory if it doesn't exist.
 func InitializeInferenceManager() error {
 	var err error
 
@@ -845,11 +851,15 @@ func InitializeInferenceManager() error {
 	// Initialize the inference manager
 	inferenceManager, err = binding.NewInferenceManager(ModelRepositoryPath)
 	if err != nil {
-		return fmt.Errorf("failed to creating inference manager: %v", err)
+		return fmt.Errorf("failed to create inference manager: %v", err)
 	}
 	return nil
 }
 
+// run is the main function that starts the server, configures routes,
+// and handles graceful shutdown.
+// run is the main function that starts the server, configures routes,
+// and handles graceful shutdown.
 func run(ctx context.Context) error {
 	log.Println("Starting AI Inference Server...")
 
@@ -903,7 +913,7 @@ func run(ctx context.Context) error {
 
 	if cudaAvailable {
 		router.GET("/devices", getDevices(cudaAvailable, deviceCount))
-		router.GET("gpu/memory", GetGPUMemory(cudaAvailable, deviceCount))
+		router.GET("/gpu/memory", GetGPUMemory(cudaAvailable, deviceCount))
 	}
 
 	// Start ngrok listener

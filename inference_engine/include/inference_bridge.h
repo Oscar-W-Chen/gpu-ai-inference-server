@@ -121,8 +121,6 @@ void InferenceFreeModelList(char** models, int num_models);
 // Model functions
 ModelHandle ModelCreate(const char* model_path, ModelType type, const ModelConfig* config, DeviceType device, int device_id, ErrorMessage* error);
 void ModelDestroy(ModelHandle handle);
-bool ModelLoad(ModelHandle handle, ErrorMessage* error);
-bool ModelUnload(ModelHandle handle, ErrorMessage* error);
 bool ModelIsLoaded(ModelHandle handle);
 bool ModelInfer(ModelHandle handle, const TensorData* inputs, int num_inputs, TensorData* outputs, int num_outputs, ErrorMessage* error);
 ModelMetadata* ModelGetMetadata(ModelHandle handle);
@@ -130,21 +128,8 @@ void ModelFreeMetadata(ModelMetadata* metadata);
 ModelStats* ModelGetStats(ModelHandle handle);
 void ModelFreeStats(ModelStats* stats);
 
-// Tensor functions
-TensorHandle TensorCreate(const char* name, DataType data_type, const Shape* shape, ErrorMessage* error);
-void TensorDestroy(TensorHandle handle);
-bool TensorSetData(TensorHandle handle, const void* data, size_t data_size, ErrorMessage* error);
-bool TensorGetData(TensorHandle handle, void* data, size_t data_size, ErrorMessage* error);
-Shape* TensorGetShape(TensorHandle handle);
-void TensorFreeShape(Shape* shape);
-DataType TensorGetDataType(TensorHandle handle);
-const char* TensorGetName(TensorHandle handle);
-bool TensorToGPU(TensorHandle handle, int device_id, ErrorMessage* error);
-bool TensorToCPU(TensorHandle handle, ErrorMessage* error);
-
 // Utility functions
 void FreeErrorMessage(ErrorMessage error);
-// Add to inference_bridge.h
 ModelHandle GetModelHandle(InferenceManagerHandle handle, const char* model_name, const char* version, ErrorMessage* error);
 
 #ifdef __cplusplus
