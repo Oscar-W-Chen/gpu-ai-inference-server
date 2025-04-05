@@ -4,8 +4,8 @@
 #include "cuda_utils.h"
 #include "model_repository.h"
 #include <fstream>
-#include <iomanip> // for std::setw, std::hex, etc.
-#include <sstream> // for std::stringstream
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <memory>
@@ -13,7 +13,6 @@
 #include <iostream>
 #include <cstring>
 
-// Bridge class for InferenceManager
 // Bridge class for InferenceManager
 struct InferenceManager_t
 {
@@ -25,9 +24,20 @@ struct InferenceManager_t
 // Bridge class for Model
 struct Model_t
 {
-    std::unique_ptr<inference::Model> model;
+    std::unique_ptr<inference::Model> owned_model;
+    inference::Model *model; // May point to owned_model.get() or an external model
 
-    Model_t(std::unique_ptr<inference::Model> m) : model(std::move(m)) {}
+    // Constructor for owned model
+    Model_t(std::unique_ptr<inference::Model> m) : owned_model(std::move(m)), model(owned_model.get()) {}
+
+    // Constructor for non-owned model reference
+    Model_t(std::nullptr_t) : owned_model(nullptr), model(nullptr) {}
+
+    // Destructor only deletes if we own the model
+    ~Model_t()
+    {
+        // owned_model's destructor will handle deletion if needed
+    }
 };
 
 // Bridge class for Tensor
@@ -40,14 +50,24 @@ struct Tensor_t
         : tensor(name, dtype, shape) {}
 };
 
-// Helper function to allocate C string copy
+/**
+ * Helper function to allocate C string copy
+ *
+ * @param str String to duplicate
+ * @return Pointer to newly allocated C string that must be freed by caller
+ */
 char *strdup_helper(const std::string &str)
 {
     char *result = strdup(str.c_str());
     return result;
 }
 
-// Helper function to convert between C and C++ enums
+/**
+ * Helper function to convert from C ModelType to C++ ModelType
+ *
+ * @param type The C ModelType enum value
+ * @return Corresponding C++ ModelType enum value
+ */
 inference::ModelType convert_model_type(ModelType type)
 {
     switch (type)
@@ -67,6 +87,12 @@ inference::ModelType convert_model_type(ModelType type)
     }
 }
 
+/**
+ * Helper function to convert from C DeviceType to C++ DeviceType
+ *
+ * @param device The C DeviceType enum value
+ * @return Corresponding C++ DeviceType enum value
+ */
 inference::DeviceType convert_device_type(DeviceType device)
 {
     switch (device)
@@ -79,6 +105,12 @@ inference::DeviceType convert_device_type(DeviceType device)
     }
 }
 
+/**
+ * Helper function to convert from C DataType to C++ DataType
+ *
+ * @param dtype The C DataType enum value
+ * @return Corresponding C++ DataType enum value
+ */
 inference::DataType convert_data_type(DataType dtype)
 {
     switch (dtype)
@@ -104,7 +136,12 @@ inference::DataType convert_data_type(DataType dtype)
     }
 }
 
-// Convert C++ ModelType to C ModelType
+/**
+ * Helper function to convert from C++ ModelType to C ModelType
+ *
+ * @param type The C++ ModelType enum value
+ * @return Corresponding C ModelType enum value
+ */
 ModelType convert_to_c_model_type(inference::ModelType type)
 {
     switch (type)
@@ -124,7 +161,12 @@ ModelType convert_to_c_model_type(inference::ModelType type)
     }
 }
 
-// Convert C++ DataType to C DataType
+/**
+ * Helper function to convert from C++ DataType to C DataType
+ *
+ * @param dtype The C++ DataType enum value
+ * @return Corresponding C DataType enum value
+ */
 DataType convert_to_c_data_type(inference::DataType dtype)
 {
     switch (dtype)
@@ -153,28 +195,48 @@ DataType convert_to_c_data_type(inference::DataType dtype)
 // CUDA utility functions
 extern "C"
 {
+    /**
+     * Check if CUDA is available on the system
+     *
+     * @return true if CUDA is available, false otherwise
+     */
     bool IsCudaAvailable()
     {
         return inference::cuda::IsCudaAvailable();
     }
 
+    /**
+     * Get the number of CUDA devices (GPUs) available on the system
+     *
+     * @return Number of CUDA devices, 0 if no devices are available
+     */
     int GetDeviceCount()
     {
         return inference::cuda::GetDeviceCount();
     }
 
+    /**
+     * Get information about a specific CUDA device
+     *
+     * @param device_id The ID of the device to query
+     * @return String containing device information (must be freed by caller)
+     */
     const char *GetDeviceInfo(int device_id)
     {
         std::string info = inference::cuda::GetDeviceInfo(device_id);
         return strdup_helper(info);
     }
 
+    /**
+     * Get memory information for a specific CUDA device
+     *
+     * @param device_id The ID of the device to query
+     * @return CudaMemoryInfo structure containing total, free, and used memory
+     */
     CudaMemoryInfo GetMemoryInfo(int device_id)
     {
-        // Call the C++ function from cuda_utils
         inference::cuda::MemoryInfo memInfo = inference::cuda::GetMemoryInfo(device_id);
 
-        // Convert to C struct for the bridge
         CudaMemoryInfo cInfo;
         cInfo.total = memInfo.total;
         cInfo.free = memInfo.free;
@@ -183,7 +245,12 @@ extern "C"
         return cInfo;
     }
 
-    // Inference Manager Functions
+    /**
+     * Initialize the inference manager with a model repository
+     *
+     * @param model_repository_path Path to the model repository
+     * @return Handle to the inference manager, NULL if initialization fails
+     */
     InferenceManagerHandle InferenceInitialize(const char *model_repository_path)
     {
         try
@@ -207,11 +274,25 @@ extern "C"
         }
     }
 
+    /**
+     * Shutdown and clean up the inference manager
+     *
+     * @param handle Handle to the inference manager
+     */
     void InferenceShutdown(InferenceManagerHandle handle)
     {
         delete handle;
     }
 
+    /**
+     * Load a model from the repository
+     *
+     * @param handle Handle to the inference manager
+     * @param model_name Name of the model to load
+     * @param version Model version to load, NULL or empty string for latest version
+     * @param error If error occurs, will contain error message that must be freed
+     * @return true if model loaded successfully, false otherwise
+     */
     bool InferenceLoadModel(InferenceManagerHandle handle, const char *model_name, const char *version, ErrorMessage *error)
     {
         if (!handle || !model_name)
@@ -223,30 +304,13 @@ extern "C"
 
         try
         {
-            std::cerr << "Debug [InferenceLoadModel]: Loading model: " << model_name
-                      << ", version: " << (version ? version : "latest")
-                      << ", repo path: " << handle->model_repository_path << std::endl;
-
-            // In a real implementation, we would load the model from the repository
-            if (!handle->repository)
-            {
-                std::cerr << "Debug [InferenceLoadModel]: Repository is null" << std::endl;
-                if (error)
-                    *error = strdup_helper("Repository is not initialized");
-                return false;
-            }
-
             // Get model path and configuration from repository
             std::string resolved_version = version ? version : handle->repository->GetLatestVersion(model_name);
             std::string model_path = handle->repository->GetModelPath(model_name, resolved_version);
 
-            std::cerr << "Debug [InferenceLoadModel]: Resolved version: " << resolved_version << std::endl;
-            std::cerr << "Debug [InferenceLoadModel]: Resolved model path: " << model_path << std::endl;
-
             // Verify that the model directory exists
             if (!std::filesystem::exists(model_path))
             {
-                std::cerr << "Debug [InferenceLoadModel]: Model path does not exist: " << model_path << std::endl;
                 if (error)
                     *error = strdup_helper(("Model path not found: " + model_path).c_str());
                 return false;
@@ -255,7 +319,6 @@ extern "C"
             // Check if model is already loaded
             if (handle->models.find(model_name) != handle->models.end())
             {
-                std::cerr << "Debug [InferenceLoadModel]: Model already loaded: " << model_name << std::endl;
                 if (error)
                     *error = strdup_helper("Model already loaded");
                 return false;
@@ -263,117 +326,54 @@ extern "C"
 
             // Check for model.onnx file
             std::string onnx_file_path = model_path + "/model.onnx";
-            if (std::filesystem::exists(onnx_file_path))
+            if (!std::filesystem::exists(onnx_file_path))
             {
-                std::cerr << "Debug [InferenceLoadModel]: Found ONNX file at: " << onnx_file_path << std::endl;
-                std::cerr << "Debug [InferenceLoadModel]: File size: "
-                          << std::filesystem::file_size(onnx_file_path) << " bytes" << std::endl;
-
-                // Try to read a few bytes to check if file is accessible
-                std::ifstream file(onnx_file_path, std::ios::binary);
-                if (file.is_open())
-                {
-                    char header[16];
-                    file.read(header, sizeof(header));
-                    std::cerr << "Debug [InferenceLoadModel]: Successfully read "
-                              << file.gcount() << " bytes from file" << std::endl;
-
-                    // Print first few bytes in hex for debugging
-                    std::stringstream ss;
-                    ss << "Debug [InferenceLoadModel]: File header bytes: ";
-                    for (int i = 0; i < file.gcount() && i < 16; i++)
-                    {
-                        ss << std::hex << std::setw(2) << std::setfill('0')
-                           << (int)(unsigned char)header[i] << " ";
-                    }
-                    std::cerr << ss.str() << std::endl;
-                }
-                else
-                {
-                    std::cerr << "Debug [InferenceLoadModel]: Failed to open file for reading" << std::endl;
-                    if (error)
-                        *error = strdup_helper(("Cannot read model file: " + onnx_file_path).c_str());
-                    return false;
-                }
-            }
-            else
-            {
-                std::cerr << "Debug [InferenceLoadModel]: ONNX file not found at: " << onnx_file_path << std::endl;
-
-                // List directory contents to see what's there
-                std::cerr << "Debug [InferenceLoadModel]: Directory contents of " << model_path << ":" << std::endl;
-                for (const auto &entry : std::filesystem::directory_iterator(model_path))
-                {
-                    std::cerr << "  - " << entry.path().filename().string();
-                    if (entry.is_directory())
-                    {
-                        std::cerr << " (directory)";
-                    }
-                    else
-                    {
-                        std::cerr << " (" << std::filesystem::file_size(entry.path()) << " bytes)";
-                    }
-                    std::cerr << std::endl;
-                }
+                if (error)
+                    *error = strdup_helper(("ONNX file not found at: " + onnx_file_path).c_str());
+                return false;
             }
 
             // Load the model configuration from repository
             inference::ModelConfig config = handle->repository->GetModelConfig(model_name, resolved_version);
             if (config.type == inference::ModelType::UNKNOWN)
             {
-                std::cerr << "Debug [InferenceLoadModel]: Unable to determine model type for: "
-                          << model_name << std::endl;
                 if (error)
                     *error = strdup_helper("Unable to determine model type");
                 return false;
             }
 
-            std::cerr << "Debug [InferenceLoadModel]: Model type determined: "
-                      << static_cast<int>(config.type) << std::endl;
-            std::cerr << "Debug [InferenceLoadModel]: Input names ("
-                      << config.input_names.size() << "): ";
-            for (const auto &name : config.input_names)
-            {
-                std::cerr << name << " ";
-            }
-            std::cerr << std::endl;
-
-            std::cerr << "Debug [InferenceLoadModel]: Output names ("
-                      << config.output_names.size() << "): ";
-            for (const auto &name : config.output_names)
-            {
-                std::cerr << name << " ";
-            }
-            std::cerr << std::endl;
-
             // Create and load the model
-            std::cerr << "Debug [InferenceLoadModel]: Creating model instance" << std::endl;
             handle->models[model_name] = std::make_unique<inference::Model>(
                 model_path, config.type, config, inference::DeviceType::GPU, 0);
 
-            std::cerr << "Debug [InferenceLoadModel]: Loading model" << std::endl;
             if (!handle->models[model_name]->Load())
             {
                 std::string err_msg = handle->models[model_name]->GetLastError();
-                std::cerr << "Debug [InferenceLoadModel]: Load failed: " << err_msg << std::endl;
                 handle->models.erase(model_name);
                 if (error)
                     *error = strdup_helper(err_msg.c_str());
                 return false;
             }
 
-            std::cerr << "Debug [InferenceLoadModel]: Model loaded successfully" << std::endl;
             return true;
         }
         catch (const std::exception &e)
         {
-            std::cerr << "Debug [InferenceLoadModel]: Exception: " << e.what() << std::endl;
             if (error)
                 *error = strdup_helper(e.what());
             return false;
         }
     }
 
+    /**
+     * Unload a model
+     *
+     * @param handle Handle to the inference manager
+     * @param model_name Name of the model to unload
+     * @param version Model version to unload, NULL or empty string for latest version
+     * @param error If error occurs, will contain error message that must be freed
+     * @return true if model unloaded successfully, false otherwise
+     */
     bool InferenceUnloadModel(InferenceManagerHandle handle, const char *model_name, const char *version, ErrorMessage *error)
     {
         if (!handle || !model_name)
@@ -406,6 +406,14 @@ extern "C"
         }
     }
 
+    /**
+     * Check if a model is loaded
+     *
+     * @param handle Handle to the inference manager
+     * @param model_name Name of the model to check
+     * @param version Model version to check, NULL or empty string for latest version
+     * @return true if model is loaded, false otherwise
+     */
     bool InferenceIsModelLoaded(InferenceManagerHandle handle, const char *model_name, const char *version)
     {
         if (!handle || !model_name)
@@ -425,6 +433,13 @@ extern "C"
         }
     }
 
+    /**
+     * List available models in the repository
+     *
+     * @param handle Handle to the inference manager
+     * @param num_models Output parameter that will be set to the number of models
+     * @return Array of model name strings that must be freed with InferenceFreeModelList
+     */
     char **InferenceListModels(InferenceManagerHandle handle, int *num_models)
     {
         if (!handle || !num_models)
@@ -481,6 +496,12 @@ extern "C"
         }
     }
 
+    /**
+     * Free a list of models returned by InferenceListModels
+     *
+     * @param models Array of model name strings
+     * @param num_models Number of models in the array
+     */
     void InferenceFreeModelList(char **models, int num_models)
     {
         if (models)
@@ -493,7 +514,17 @@ extern "C"
         }
     }
 
-    // Model Functions
+    /**
+     * Create a model instance
+     *
+     * @param model_path Path to the model file
+     * @param type Type of the model (TensorFlow, PyTorch, etc.)
+     * @param config Configuration for the model
+     * @param device Device to run model on (CPU or GPU)
+     * @param device_id ID of the device to use
+     * @param error If error occurs, will contain error message that must be freed
+     * @return Handle to the model, NULL if creation fails
+     */
     ModelHandle ModelCreate(const char *model_path, ModelType type, const ModelConfig *config, DeviceType device, int device_id, ErrorMessage *error)
     {
         if (!model_path || !config)
@@ -552,11 +583,23 @@ extern "C"
         }
     }
 
+    /**
+     * Destroy a model instance
+     *
+     * @param handle Handle to the model
+     */
     void ModelDestroy(ModelHandle handle)
     {
         delete handle;
     }
 
+    /**
+     * Load a model into memory
+     *
+     * @param handle Handle to the model
+     * @param error If error occurs, will contain error message that must be freed
+     * @return true if model loaded successfully, false otherwise
+     */
     bool ModelLoad(ModelHandle handle, ErrorMessage *error)
     {
         if (!handle)
@@ -583,6 +626,13 @@ extern "C"
         }
     }
 
+    /**
+     * Unload a model from memory
+     *
+     * @param handle Handle to the model
+     * @param error If error occurs, will contain error message that must be freed
+     * @return true if model unloaded successfully, false otherwise
+     */
     bool ModelUnload(ModelHandle handle, ErrorMessage *error)
     {
         if (!handle)
@@ -605,6 +655,12 @@ extern "C"
         }
     }
 
+    /**
+     * Check if a model is loaded
+     *
+     * @param handle Handle to the model
+     * @return true if model is loaded, false otherwise
+     */
     bool ModelIsLoaded(ModelHandle handle)
     {
         if (!handle)
@@ -622,8 +678,34 @@ extern "C"
         }
     }
 
+    /**
+     * Run inference on a model
+     *
+     * @param handle Handle to the model
+     * @param inputs Array of input tensors
+     * @param num_inputs Number of input tensors
+     * @param outputs Array of output tensors to be filled
+     * @param num_outputs Number of output tensors
+     * @param error If error occurs, will contain error message that must be freed
+     * @return true if inference was successful, false otherwise
+     */
     bool ModelInfer(ModelHandle handle, const TensorData *inputs, int num_inputs, TensorData *outputs, int num_outputs, ErrorMessage *error)
     {
+        if (!handle)
+        {
+            if (error)
+                *error = strdup_helper("Invalid model handle");
+            return false;
+        }
+
+        // Check if model is loaded
+        if (!handle->model->IsLoaded())
+        {
+            if (error)
+                *error = strdup_helper("Model not loaded");
+            return false;
+        }
+
         if (!handle || !inputs || num_inputs <= 0 || !outputs || num_outputs <= 0)
         {
             if (error)
@@ -745,6 +827,12 @@ extern "C"
         }
     }
 
+    /**
+     * Get metadata about a model
+     *
+     * @param handle Handle to the model
+     * @return Metadata structure, NULL if not available. Must be freed with ModelFreeMetadata
+     */
     ModelMetadata *ModelGetMetadata(ModelHandle handle)
     {
         if (!handle)
@@ -802,6 +890,11 @@ extern "C"
         }
     }
 
+    /**
+     * Free a model metadata structure
+     *
+     * @param metadata Metadata structure to free
+     */
     void ModelFreeMetadata(ModelMetadata *metadata)
     {
         if (metadata)
@@ -832,6 +925,12 @@ extern "C"
         }
     }
 
+    /**
+     * Get statistics about a model
+     *
+     * @param handle Handle to the model
+     * @return Statistics structure, NULL if not available. Must be freed with ModelFreeStats
+     */
     ModelStats *ModelGetStats(ModelHandle handle)
     {
         if (!handle)
@@ -858,6 +957,11 @@ extern "C"
         }
     }
 
+    /**
+     * Free a model statistics structure
+     *
+     * @param stats Statistics structure to free
+     */
     void ModelFreeStats(ModelStats *stats)
     {
         if (stats)
@@ -866,246 +970,60 @@ extern "C"
         }
     }
 
-    // Tensor Functions - implemented without ResourceManager
-    TensorHandle TensorCreate(const char *name, DataType data_type, const Shape *shape, ErrorMessage *error)
-    {
-        if (!name || !shape)
-        {
-            if (error)
-                *error = strdup_helper("Invalid tensor parameters");
-            return nullptr;
-        }
-
-        try
-        {
-            // Convert shape
-            inference::Shape cpp_shape;
-            if (shape->dims && shape->num_dims > 0)
-            {
-                cpp_shape.dims.resize(shape->num_dims);
-                for (int i = 0; i < shape->num_dims; i++)
-                {
-                    cpp_shape.dims[i] = shape->dims[i];
-                }
-            }
-
-            // Create tensor directly
-            Tensor_t *handle = new Tensor_t(
-                name,
-                convert_data_type(data_type),
-                cpp_shape);
-
-            return handle;
-        }
-        catch (const std::exception &e)
-        {
-            if (error)
-                *error = strdup_helper(e.what());
-            return nullptr;
-        }
-    }
-
-    void TensorDestroy(TensorHandle handle)
-    {
-        delete handle;
-    }
-
-    bool TensorSetData(TensorHandle handle, const void *data, size_t data_size, ErrorMessage *error)
-    {
-        if (!handle || !data || data_size <= 0)
-        {
-            if (error)
-                *error = strdup_helper("Invalid tensor data");
-            return false;
-        }
-
-        try
-        {
-            // This is simplified for float32 only
-            if (handle->tensor.GetDataType() == inference::DataType::FLOAT32)
-            {
-                size_t num_elements = handle->tensor.GetShape().NumElements();
-                std::vector<float> float_data(num_elements);
-                memcpy(float_data.data(), data, std::min(data_size, num_elements * sizeof(float)));
-                return handle->tensor.SetData(float_data);
-            }
-            else
-            {
-                if (error)
-                    *error = strdup_helper("Unsupported data type");
-                return false;
-            }
-        }
-        catch (const std::exception &e)
-        {
-            if (error)
-                *error = strdup_helper(e.what());
-            return false;
-        }
-    }
-
-    bool TensorGetData(TensorHandle handle, void *data, size_t data_size, ErrorMessage *error)
-    {
-        if (!handle || !data || data_size <= 0)
-        {
-            if (error)
-                *error = strdup_helper("Invalid tensor data buffer");
-            return false;
-        }
-
-        try
-        {
-            // This is simplified for float32 only
-            if (handle->tensor.GetDataType() == inference::DataType::FLOAT32)
-            {
-                std::vector<float> float_data;
-                bool result = handle->tensor.GetData(float_data);
-                if (result)
-                {
-                    size_t bytes_to_copy = std::min(data_size, float_data.size() * sizeof(float));
-                    memcpy(data, float_data.data(), bytes_to_copy);
-                }
-                return result;
-            }
-            else
-            {
-                if (error)
-                    *error = strdup_helper("Unsupported data type");
-                return false;
-            }
-        }
-        catch (const std::exception &e)
-        {
-            if (error)
-                *error = strdup_helper(e.what());
-            return false;
-        }
-    }
-
-    Shape *TensorGetShape(TensorHandle handle)
-    {
-        if (!handle)
-        {
-            return nullptr;
-        }
-
-        try
-        {
-            const inference::Shape &cpp_shape = handle->tensor.GetShape();
-
-            // Create C shape
-            Shape *shape = new Shape();
-            shape->num_dims = cpp_shape.dims.size();
-
-            if (shape->num_dims > 0)
-            {
-                shape->dims = new int64_t[shape->num_dims];
-                for (int i = 0; i < shape->num_dims; i++)
-                {
-                    shape->dims[i] = cpp_shape.dims[i];
-                }
-            }
-            else
-            {
-                shape->dims = nullptr;
-            }
-
-            return shape;
-        }
-        catch (...)
-        {
-            return nullptr;
-        }
-    }
-
-    void TensorFreeShape(Shape *shape)
-    {
-        if (shape)
-        {
-            delete[] shape->dims;
-            delete shape;
-        }
-    }
-
-    DataType TensorGetDataType(TensorHandle handle)
-    {
-        if (!handle)
-        {
-            return DATATYPE_UNKNOWN;
-        }
-
-        try
-        {
-            return convert_to_c_data_type(handle->tensor.GetDataType());
-        }
-        catch (...)
-        {
-            return DATATYPE_UNKNOWN;
-        }
-    }
-
-    const char *TensorGetName(TensorHandle handle)
-    {
-        if (!handle)
-        {
-            return nullptr;
-        }
-
-        try
-        {
-            return strdup_helper(handle->tensor.GetName());
-        }
-        catch (...)
-        {
-            return nullptr;
-        }
-    }
-
-    bool TensorToGPU(TensorHandle handle, int device_id, ErrorMessage *error)
-    {
-        if (!handle)
-        {
-            if (error)
-                *error = strdup_helper("Invalid tensor handle");
-            return false;
-        }
-
-        try
-        {
-            return handle->tensor.toGPU(device_id);
-        }
-        catch (const std::exception &e)
-        {
-            if (error)
-                *error = strdup_helper(e.what());
-            return false;
-        }
-    }
-
-    bool TensorToCPU(TensorHandle handle, ErrorMessage *error)
-    {
-        if (!handle)
-        {
-            if (error)
-                *error = strdup_helper("Invalid tensor handle");
-            return false;
-        }
-
-        try
-        {
-            return handle->tensor.toCPU();
-        }
-        catch (const std::exception &e)
-        {
-            if (error)
-                *error = strdup_helper(e.what());
-            return false;
-        }
-    }
-
-    // Utility Functions
+    /**
+     * Free an error message
+     *
+     * @param error Error message to free
+     */
     void FreeErrorMessage(ErrorMessage error)
     {
         free(error);
+    }
+
+    /**
+     * Get a handle to an already loaded model
+     *
+     * @param handle Handle to the inference manager
+     * @param model_name Name of the model to get
+     * @param version Model version to get, NULL or empty string for latest version
+     * @param error If error occurs, will contain error message that must be freed
+     * @return Handle to the model, NULL if not found
+     */
+    ModelHandle GetModelHandle(InferenceManagerHandle handle, const char *model_name, const char *version, ErrorMessage *error)
+    {
+        if (!handle || !model_name)
+        {
+            if (error)
+                *error = strdup_helper("Invalid handle or model name");
+            return nullptr;
+        }
+
+        try
+        {
+            // Find the model in the loaded models map
+            auto it = handle->models.find(model_name);
+            if (it == handle->models.end())
+            {
+                if (error)
+                    *error = strdup_helper("Model not found in loaded models");
+                return nullptr;
+            }
+
+            // Create a wrapper Model_t that doesn't own the model
+            // but references the existing one
+            Model_t *model_handle = new Model_t(nullptr);
+
+            // Directly assign the model pointer to handle's model member
+            // This bypasses unique_ptr ownership issues
+            model_handle->model = it->second.get();
+
+            return model_handle;
+        }
+        catch (const std::exception &e)
+        {
+            if (error)
+                *error = strdup_helper(e.what());
+            return nullptr;
+        }
     }
 }

@@ -17,6 +17,9 @@ namespace inference {
 
 /**
  * @brief Convert model state enum to string representation
+ * 
+ * @param state The ModelState enum value to convert
+ * @return std::string String representation of the state
  */
 std::string ModelStateToString(ModelState state) {
     switch (state) {
@@ -35,7 +38,10 @@ std::string ModelStateToString(ModelState state) {
 //==============================================================================
 
 /**
- * @brief Constructor
+ * @brief Constructor for InferenceManager
+ * 
+ * @param model_repository_path Path to the model repository
+ * @param num_worker_threads Number of worker threads for async operations
  */
 InferenceManager::InferenceManager(const std::string& model_repository_path, int num_worker_threads)
     : model_repository_path_(model_repository_path),
@@ -48,7 +54,7 @@ InferenceManager::InferenceManager(const std::string& model_repository_path, int
 }
 
 /**
- * @brief Destructor
+ * @brief Destructor for InferenceManager
  */
 InferenceManager::~InferenceManager() {
     Shutdown();
@@ -56,6 +62,8 @@ InferenceManager::~InferenceManager() {
 
 /**
  * @brief Initialize the inference manager and repository
+ * 
+ * @return bool true if initialization was successful, false otherwise
  */
 bool InferenceManager::Initialize() {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -170,6 +178,10 @@ void InferenceManager::WorkerThreadFunc() {
 
 /**
  * @brief Create a unique key for a model+version combination
+ * 
+ * @param name Model name
+ * @param version Model version (can be empty for latest)
+ * @return std::string Model key in the format "name:version" or just "name"
  */
 std::string InferenceManager::MakeModelKey(const std::string& name, const std::string& version) const {
     if (version.empty()) {
@@ -186,7 +198,22 @@ std::string InferenceManager::MakeModelKey(const std::string& name, const std::s
 }
 
 /**
+ * @brief Set error message (thread-safe)
+ * 
+ * @param error Error message
+ */
+void InferenceManager::SetError(const std::string& error) const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    last_error_ = error;
+    std::cerr << "InferenceManager error: " << error << std::endl;
+}
+
+/**
  * @brief Load a model synchronously
+ * 
+ * @param model_name Name of the model to load
+ * @param version Version of the model to load (empty for latest)
+ * @return bool true if loading was successful, false otherwise
  */
 bool InferenceManager::LoadModel(const std::string& model_name, const std::string& version) {
     std::string model_key = MakeModelKey(model_name, version);
@@ -205,6 +232,11 @@ bool InferenceManager::LoadModel(const std::string& model_name, const std::strin
 
 /**
  * @brief Load a model asynchronously
+ * 
+ * @param model_name Name of the model to load
+ * @param version Version of the model to load (empty for latest)
+ * @param callback Function to call when loading completes
+ * @return bool true if loading was queued successfully, false otherwise
  */
 bool InferenceManager::LoadModelAsync(const std::string& model_name, 
                                      const std::string& version,
@@ -242,6 +274,11 @@ bool InferenceManager::LoadModelAsync(const std::string& model_name,
 
 /**
  * @brief Internal implementation of model loading
+ * 
+ * @param model_name Name of the model to load
+ * @param version Version of the model to load
+ * @param model_key Internal key for the model
+ * @return bool true if loading was successful, false otherwise
  */
 bool InferenceManager::LoadModelInternal(const std::string& model_name, 
                                         const std::string& version,
@@ -348,6 +385,10 @@ bool InferenceManager::LoadModelInternal(const std::string& model_name,
 
 /**
  * @brief Unload a model synchronously
+ * 
+ * @param model_name Name of the model to unload
+ * @param version Version of the model to unload (empty for latest)
+ * @return bool true if unloading was successful, false otherwise
  */
 bool InferenceManager::UnloadModel(const std::string& model_name, const std::string& version) {
     std::string model_key = MakeModelKey(model_name, version);
@@ -356,6 +397,11 @@ bool InferenceManager::UnloadModel(const std::string& model_name, const std::str
 
 /**
  * @brief Unload a model asynchronously
+ * 
+ * @param model_name Name of the model to unload
+ * @param version Version of the model to unload (empty for latest)
+ * @param callback Function to call when unloading completes
+ * @return bool true if unloading was queued successfully, false otherwise
  */
 bool InferenceManager::UnloadModelAsync(const std::string& model_name, 
                                        const std::string& version,
@@ -384,6 +430,11 @@ bool InferenceManager::UnloadModelAsync(const std::string& model_name,
 
 /**
  * @brief Internal implementation of model unloading
+ * 
+ * @param model_name Name of the model to unload
+ * @param version Version of the model to unload
+ * @param model_key Internal key for the model
+ * @return bool true if unloading was successful, false otherwise
  */
 bool InferenceManager::UnloadModelInternal(const std::string& model_name, 
                                           const std::string& version,
@@ -452,6 +503,10 @@ bool InferenceManager::UnloadModelInternal(const std::string& model_name,
 
 /**
  * @brief Check if a model is loaded and ready for inference
+ * 
+ * @param model_name Name of the model to check
+ * @param version Version of the model to check (empty for latest)
+ * @return bool true if the model is loaded, false otherwise
  */
 bool InferenceManager::IsModelLoaded(const std::string& model_name, const std::string& version) {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -462,7 +517,12 @@ bool InferenceManager::IsModelLoaded(const std::string& model_name, const std::s
     return (it != models_.end() && it->second.state == ModelState::LOADED);
 }
 
-// Helper function to escape strings for JSON output
+/**
+ * @brief Escape a string for JSON output
+ * 
+ * @param input Input string to escape
+ * @return std::string Escaped string
+ */
 std::string EscapeJsonString(const std::string& input) {
     std::ostringstream ss;
     for (auto ch : input) {
@@ -488,6 +548,10 @@ std::string EscapeJsonString(const std::string& input) {
 
 /**
  * @brief Get the current state of a model
+ * 
+ * @param model_name Name of the model
+ * @param version Version of the model (empty for latest)
+ * @return ModelState The current state of the model
  */
 ModelState InferenceManager::GetModelState(const std::string& model_name, const std::string& version) {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -508,6 +572,10 @@ ModelState InferenceManager::GetModelState(const std::string& model_name, const 
 
 /**
  * @brief Get detailed model status including error messages and timestamps
+ * 
+ * @param model_name Name of the model
+ * @param version Version of the model (empty for latest)
+ * @return std::string JSON string with model status details
  */
 std::string InferenceManager::GetModelStatus(const std::string& model_name, const std::string& version) {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -559,9 +627,10 @@ std::string InferenceManager::GetModelStatus(const std::string& model_name, cons
     return json.str();
 }
 
-
 /**
  * @brief List all available models in the repository
+ * 
+ * @return std::vector<std::string> Vector of model names
  */
 std::vector<std::string> InferenceManager::ListModels() {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -575,6 +644,10 @@ std::vector<std::string> InferenceManager::ListModels() {
 
 /**
  * @brief Get a loaded model by name and version
+ * 
+ * @param model_name Name of the model to get
+ * @param version Version of the model to get (empty for latest)
+ * @return std::shared_ptr<Model> Pointer to the model, or nullptr if not found or not loaded
  */
 std::shared_ptr<Model> InferenceManager::GetModel(const std::string& model_name, const std::string& version) {
     std::lock_guard<std::mutex> lock(models_mutex_);
@@ -591,6 +664,12 @@ std::shared_ptr<Model> InferenceManager::GetModel(const std::string& model_name,
 
 /**
  * @brief Run inference with a loaded model
+ * 
+ * @param model_name Name of the model to use
+ * @param version Version of the model to use (empty for latest)
+ * @param inputs Vector of input tensors
+ * @param outputs Vector of output tensors to be filled
+ * @return bool true if inference was successful, false otherwise
  */
 bool InferenceManager::RunInference(const std::string& model_name, 
                                    const std::string& version,
@@ -629,19 +708,12 @@ bool InferenceManager::RunInference(const std::string& model_name,
 
 /**
  * @brief Get the last error message
+ * 
+ * @return std::string The last error message
  */
 std::string InferenceManager::GetLastError() const {
     std::lock_guard<std::mutex> lock(error_mutex_);
     return last_error_;
-}
-
-/**
- * @brief Set error message and log it
- */
-void InferenceManager::SetError(const std::string& error) const {
-    std::lock_guard<std::mutex> lock(error_mutex_);
-    last_error_ = error;
-    std::cerr << "InferenceManager error: " << error << std::endl;
 }
 
 } // namespace inference

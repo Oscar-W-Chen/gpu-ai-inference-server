@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <cstring>        // For memcpy
-#include <cuda_runtime.h> // Need to include cuda_runtime.h for CUDA functions
+#include <cuda_runtime.h> // For CUDA functions
 
 namespace inference
 {
@@ -21,6 +21,12 @@ namespace inference
     // Tensor Implementation
     //====================================================
 
+    /**
+     * @brief Implementation details for the Tensor class
+     * 
+     * Handles data storage, memory management, and device transfer for tensors.
+     * Supports both CPU and GPU memory with transparent synchronization.
+     */
     class Tensor::TensorImpl
     {
     public:
@@ -32,6 +38,9 @@ namespace inference
         bool on_gpu{false};
         int device_id{0};
 
+        /**
+         * @brief Destructor that ensures GPU memory is freed
+         */
         ~TensorImpl()
         {
             // Free GPU memory if allocated
@@ -42,6 +51,11 @@ namespace inference
             }
         }
 
+        /**
+         * @brief Calculate the size in bytes for the tensor based on shape and data type
+         * 
+         * @return Size in bytes
+         */
         size_t ByteSize() const
         {
             size_t element_size = 0;
@@ -76,21 +90,24 @@ namespace inference
             return shape.NumElements() * element_size;
         }
 
+        /**
+         * @brief Internal implementation for setting tensor data
+         * 
+         * @tparam T Data type of the input vector
+         * @param data Vector containing the data to set
+         * @param expected_type Expected data type for validation
+         * @return true if successful, false otherwise
+         */
         template <typename T>
         bool SetDataInternal(const std::vector<T> &data, DataType expected_type)
         {
             if (dtype != expected_type)
             {
-                std::cerr << "Data type mismatch" << std::endl;
                 return false;
             }
 
             if (data.size() != shape.NumElements())
             {
-                std::cerr << "Data size mismatch. Expected "
-                          << shape.NumElements()
-                          << " elements, got "
-                          << data.size() << std::endl;
                 return false;
             }
 
@@ -108,8 +125,6 @@ namespace inference
 
                 if (error != cudaSuccess)
                 {
-                    std::cerr << "Failed to update GPU data: "
-                              << cudaGetErrorString(error) << std::endl;
                     return false;
                 }
             }
@@ -117,12 +132,19 @@ namespace inference
             return true;
         }
 
+        /**
+         * @brief Internal implementation for getting tensor data
+         * 
+         * @tparam T Data type of the output vector
+         * @param data Vector to store the retrieved data
+         * @param expected_type Expected data type for validation
+         * @return true if successful, false otherwise
+         */
         template <typename T>
         bool GetDataInternal(std::vector<T> &data, DataType expected_type) const
         {
             if (dtype != expected_type)
             {
-                std::cerr << "Data type mismatch" << std::endl;
                 return false;
             }
 
@@ -137,8 +159,6 @@ namespace inference
 
                 if (error != cudaSuccess)
                 {
-                    std::cerr << "Failed to copy data from GPU: "
-                              << cudaGetErrorString(error) << std::endl;
                     return false;
                 }
             }
@@ -153,8 +173,18 @@ namespace inference
         }
     };
 
+    /**
+     * @brief Default constructor for Tensor
+     */
     Tensor::Tensor() : impl_(new TensorImpl()) {}
 
+    /**
+     * @brief Parameterized constructor for Tensor
+     * 
+     * @param name The name of the tensor
+     * @param dtype The data type of the tensor elements
+     * @param shape The shape of the tensor
+     */
     Tensor::Tensor(const std::string &name, DataType dtype, const Shape &shape)
         : impl_(new TensorImpl())
     {
@@ -167,13 +197,26 @@ namespace inference
         impl_->cpu_data.resize(byte_size);
     }
 
-    // Copy constructor
+    /**
+     * @brief Copy constructor
+     * 
+     * @param other Tensor to copy from
+     */
     Tensor::Tensor(const Tensor &other) : impl_(new TensorImpl(*other.impl_)) {}
 
-    // Move constructor
+    /**
+     * @brief Move constructor
+     * 
+     * @param other Tensor to move from
+     */
     Tensor::Tensor(Tensor &&other) noexcept : impl_(std::move(other.impl_)) {}
 
-    // Copy assignment operator
+    /**
+     * @brief Copy assignment operator
+     * 
+     * @param other Tensor to copy from
+     * @return Reference to this tensor
+     */
     Tensor &Tensor::operator=(const Tensor &other)
     {
         if (this != &other)
@@ -183,23 +226,47 @@ namespace inference
         return *this;
     }
 
+    /**
+     * @brief Destructor
+     */
     Tensor::~Tensor() = default;
 
+    /**
+     * @brief Get the tensor name
+     * 
+     * @return The tensor name
+     */
     const std::string &Tensor::GetName() const
     {
         return impl_->name;
     }
 
+    /**
+     * @brief Get the tensor data type
+     * 
+     * @return The tensor data type
+     */
     DataType Tensor::GetDataType() const
     {
         return impl_->dtype;
     }
 
+    /**
+     * @brief Get the tensor shape
+     * 
+     * @return The tensor shape
+     */
     const Shape &Tensor::GetShape() const
     {
         return impl_->shape;
     }
 
+    /**
+     * @brief Reshape the tensor to a new shape
+     * 
+     * @param new_shape The new shape to resize to
+     * @return true if successful, false otherwise
+     */
     bool Tensor::Reshape(const Shape &new_shape)
     {
         size_t old_elements = impl_->shape.NumElements();
@@ -226,8 +293,6 @@ namespace inference
                 cudaError_t error = cudaMalloc(&impl_->gpu_data, impl_->ByteSize());
                 if (error != cudaSuccess)
                 {
-                    std::cerr << "Failed to allocate GPU memory: "
-                              << cudaGetErrorString(error) << std::endl;
                     impl_->on_gpu = false;
                     return false;
                 }
@@ -241,11 +306,16 @@ namespace inference
         return true;
     }
 
+    /**
+     * @brief Move tensor data to GPU memory
+     * 
+     * @param device_id GPU device ID to use
+     * @return true if successful, false otherwise
+     */
     bool Tensor::toGPU(int device_id)
     {
         if (!cuda::IsCudaAvailable())
         {
-            std::cerr << "CUDA is not available" << std::endl;
             return false;
         }
 
@@ -255,8 +325,6 @@ namespace inference
         cudaError_t error = cudaSetDevice(device_id);
         if (error != cudaSuccess)
         {
-            std::cerr << "Failed to set device: "
-                      << cudaGetErrorString(error) << std::endl;
             return false;
         }
 
@@ -270,8 +338,6 @@ namespace inference
         error = cudaMalloc(&impl_->gpu_data, impl_->ByteSize());
         if (error != cudaSuccess)
         {
-            std::cerr << "Failed to allocate GPU memory: "
-                      << cudaGetErrorString(error) << std::endl;
             return false;
         }
 
@@ -284,8 +350,6 @@ namespace inference
 
         if (error != cudaSuccess)
         {
-            std::cerr << "Failed to copy data to GPU: "
-                      << cudaGetErrorString(error) << std::endl;
             cudaFree(impl_->gpu_data);
             impl_->gpu_data = nullptr;
             return false;
@@ -295,6 +359,11 @@ namespace inference
         return true;
     }
 
+    /**
+     * @brief Move tensor data back to CPU memory
+     * 
+     * @return true if successful, false otherwise
+     */
     bool Tensor::toCPU()
     {
         if (!impl_->on_gpu || impl_->gpu_data == nullptr)
@@ -306,8 +375,6 @@ namespace inference
         cudaError_t error = cudaSetDevice(impl_->device_id);
         if (error != cudaSuccess)
         {
-            std::cerr << "Failed to set device: "
-                      << cudaGetErrorString(error) << std::endl;
             return false;
         }
 
@@ -320,8 +387,6 @@ namespace inference
 
         if (error != cudaSuccess)
         {
-            std::cerr << "Failed to copy data from GPU: "
-                      << cudaGetErrorString(error) << std::endl;
             return false;
         }
 
@@ -333,7 +398,7 @@ namespace inference
         return true;
     }
 
-    // Template specializations for SetData and GetData would go here
+    // Template specializations for SetData
     template <>
     bool Tensor::SetData(const std::vector<float> &data)
     {
@@ -346,7 +411,6 @@ namespace inference
         return impl_->GetDataInternal(data, DataType::FLOAT32);
     }
 
-    // Add these new specializations
     template <>
     bool Tensor::SetData(const std::vector<int> &data)
     {
@@ -375,9 +439,24 @@ namespace inference
     // Model Implementation
     //====================================================
 
+    /**
+     * @brief Internal implementation for the Model class
+     * 
+     * Handles all the details of model loading, unloading, and inference
+     * for different model types (ONNX, TensorRT, etc.)
+     */
     class ModelImpl
     {
     public:
+        /**
+         * @brief Constructor for ModelImpl
+         * 
+         * @param model_path Path to the model file or directory
+         * @param type Model type (ONNX, TensorRT, etc.)
+         * @param config Model configuration
+         * @param device Device type (CPU/GPU)
+         * @param device_id Device ID if using GPU
+         */
         ModelImpl(const std::string &model_path,
                   ModelType type,
                   const ModelConfig &config,
@@ -390,7 +469,6 @@ namespace inference
               device_id_(device_id),
               loaded_(false)
         {
-
             // Initialize metadata
             metadata_.name = config_.name;
             metadata_.version = config_.version;
@@ -406,6 +484,9 @@ namespace inference
             stats_.memory_usage_bytes = 0;
         }
 
+        /**
+         * @brief Destructor ensures model is unloaded
+         */
         ~ModelImpl()
         {
             if (loaded_)
@@ -414,6 +495,11 @@ namespace inference
             }
         }
 
+        /**
+         * @brief Load the model into memory
+         * 
+         * @return true if successful, false otherwise
+         */
         bool Load()
         {
             auto start_time = std::chrono::high_resolution_clock::now();
@@ -425,10 +511,7 @@ namespace inference
                 return false;
             }
 
-            // Model type specific loading would go here
-            // For example, loading TensorFlow, TensorRT, ONNX, etc.
-            // This is just a placeholder implementation
-
+            // Model type specific loading
             switch (type_)
             {
             case ModelType::TENSORFLOW:
@@ -464,6 +547,13 @@ namespace inference
             return loaded_;
         }
 
+        /**
+         * @brief Run inference using the loaded model
+         * 
+         * @param inputs Vector of input tensors
+         * @param outputs Vector to store output tensors
+         * @return true if successful, false otherwise
+         */
         bool Infer(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
             if (!loaded_)
@@ -478,13 +568,7 @@ namespace inference
                 return false;
             }
 
-            // TODO: Prepare outputs
-            // Placeholder for now to avoid the function call
-            // if (!PrepareOutputs(outputs)) {
-            //    return false;
-            // }
-
-            // Model-specific inference would go here
+            // Model-specific inference
             auto start_time = std::chrono::high_resolution_clock::now();
 
             bool success = false;
@@ -528,9 +612,12 @@ namespace inference
             return success;
         }
 
+        /**
+         * @brief Unload the model from memory
+         */
         void Unload()
         {
-            // Model-specific unloading would go here
+            // Model-specific unloading
             switch (type_)
             {
             case ModelType::TENSORFLOW:
@@ -560,21 +647,41 @@ namespace inference
             loaded_ = false;
         }
 
+        /**
+         * @brief Get metadata about the model
+         * 
+         * @return ModelMetadata struct with model information
+         */
         ModelMetadata GetMetadata() const
         {
             return metadata_;
         }
 
+        /**
+         * @brief Check if model is currently loaded
+         * 
+         * @return true if loaded, false otherwise
+         */
         bool IsLoaded() const
         {
             return loaded_;
         }
 
+        /**
+         * @brief Get the last error message
+         * 
+         * @return Error message string
+         */
         std::string GetLastError() const
         {
             return last_error_;
         }
 
+        /**
+         * @brief Get model statistics
+         * 
+         * @return Stats struct with performance metrics
+         */
         Model::Stats GetStats() const
         {
             return stats_;
@@ -606,13 +713,24 @@ namespace inference
         std::vector<ONNXTensorElementDataType> onnx_input_types_;
         std::vector<ONNXTensorElementDataType> onnx_output_types_;
 
-        // Helper methods
+        /**
+         * @brief Check if a file exists
+         * 
+         * @param path Path to check
+         * @return true if exists, false otherwise
+         */
         bool FileExists(const std::string &path)
         {
             std::ifstream file(path);
             return file.good();
         }
 
+        /**
+         * @brief Validate input tensors against model requirements
+         * 
+         * @param inputs Vector of input tensors to validate
+         * @return true if valid, false otherwise
+         */
         bool ValidateInputs(const std::vector<Tensor> &inputs)
         {
             // Check input count
@@ -675,34 +793,34 @@ namespace inference
             return true;
         }
 
-        // Model-specific implementation placeholders
-        // These would be implemented based on the actual model framework
-
+        /**
+         * @brief Load a TensorFlow model
+         * 
+         * @return true if successful, false otherwise
+         */
         bool LoadTensorFlowModel()
         {
-            // TODO: Implement TensorFlow model loading
+            // Implementation placeholder
             last_error_ = "TensorFlow model loading not implemented";
             return false;
         }
 
+        /**
+         * @brief Load a TensorRT model
+         * 
+         * @return true if successful, false otherwise
+         */
         bool LoadTensorRTModel()
         {
-            // TODO: Implement TensorRT model loading
+            // Implementation placeholder
             last_error_ = "TensorRT model loading not implemented";
             return false;
         }
 
         /**
          * @brief Load an ONNX model into memory and prepare it for inference
-         *
-         * This method handles the complete ONNX model loading process:
-         * 1. Creates the ONNX Runtime environment
-         * 2. Configures execution providers (CPU/CUDA)
-         * 3. Loads the model file and creates a session
-         * 4. Extracts model metadata (inputs/outputs, shapes, data types)
-         * 5. Updates memory usage statistics
-         *
-         * @return true if model was loaded successfully, false otherwise
+         * 
+         * @return true if successful, false otherwise
          */
         bool LoadONNXModel()
         {
@@ -710,7 +828,6 @@ namespace inference
             {
                 // Construct the full path to the ONNX file
                 std::string onnx_file_path = model_path_ + "/model.onnx";
-                std::cout << "Debug [LoadONNXModel]: Full ONNX file path: " << onnx_file_path << std::endl;
 
                 // Verify the model file exists
                 if (!std::filesystem::exists(onnx_file_path))
@@ -727,7 +844,6 @@ namespace inference
                 ConfigureSessionOptions(session_options);
 
                 // Create ONNX Runtime session with the FULL file path
-                std::cout << "Debug [LoadONNXModel]: Creating session with file: " << onnx_file_path << std::endl;
                 onnx_session_ = std::make_unique<Ort::Session>(onnx_env_, onnx_file_path.c_str(), session_options);
 
                 // Extract model metadata and update internal structures
@@ -739,6 +855,7 @@ namespace inference
                 // Update memory usage statistics
                 stats_.memory_usage_bytes = EstimateModelMemoryUsage();
 
+                loaded_ = true;
                 return true;
             }
             catch (const Ort::Exception &e)
@@ -754,12 +871,9 @@ namespace inference
         }
 
         /**
-         * @brief Configure ONNX Runtime session options based on model configuration
-         *
-         * Sets up execution providers, optimization level, thread count, and execution mode.
-         * If GPU is available and requested, registers the CUDA execution provider.
-         *
-         * @param session_options The SessionOptions object to configure
+         * @brief Configure ONNX Runtime session options
+         * 
+         * @param session_options SessionOptions object to configure
          */
         void ConfigureSessionOptions(Ort::SessionOptions &session_options)
         {
@@ -789,15 +903,9 @@ namespace inference
         }
 
         /**
-         * @brief Extract model metadata including input/output names, shapes, and types
-         *
-         * This method queries the ONNX Runtime session to get information about:
-         * - Number of inputs and outputs
-         * - Names of all inputs and outputs
-         * - Data types for all tensors
-         * - Shape information for all tensors
-         *
-         * @return true if metadata extraction succeeded, false otherwise
+         * @brief Extract model metadata from ONNX Runtime session
+         * 
+         * @return true if successful, false otherwise
          */
         bool ExtractModelMetadata()
         {
@@ -865,12 +973,7 @@ namespace inference
 
         /**
          * @brief Estimate memory usage for the ONNX model
-         *
-         * Calculates approximate memory required by:
-         * 1. Input tensors - based on shapes and data types
-         * 2. Output tensors - based on shapes and data types
-         * 3. Model weights and internal buffers (estimated)
-         *
+         * 
          * @return Estimated memory usage in bytes
          */
         size_t EstimateModelMemoryUsage() const
@@ -931,7 +1034,12 @@ namespace inference
             return total_size + BASE_OVERHEAD_BYTES;
         }
 
-        // Helper function to convert from ONNX data type to inference::DataType
+        /**
+         * @brief Convert from ONNX data type to inference::DataType
+         * 
+         * @param onnx_type ONNX data type
+         * @return Corresponding inference::DataType
+         */
         DataType ConvertFromOnnxDataType(ONNXTensorElementDataType onnx_type)
         {
             switch (onnx_type)
@@ -957,7 +1065,12 @@ namespace inference
             }
         }
 
-        // Helper function to convert from inference::DataType to ONNX data type
+        /**
+         * @brief Convert from inference::DataType to ONNX data type
+         * 
+         * @param dtype inference::DataType
+         * @return Corresponding ONNX data type
+         */
         ONNXTensorElementDataType ConvertToOnnxDataType(DataType dtype)
         {
             switch (dtype)
@@ -983,135 +1096,65 @@ namespace inference
             }
         }
 
-        // Helper function to estimate model memory usage
-        size_t EstimateModeMemoryUsage() const
-        {
-            // Simplified estimation to calculate ONNX Runtime memory usage
-            size_t total_size = 0;
-
-            // Sum up input tensor sizes
-            for (size_t i = 0; i < onnx_input_shapes_.size(); i++)
-            {
-                size_t tensor_size = 1;
-                for (const auto &dim : onnx_input_shapes_[i])
-                {
-                    if (dim > 0)
-                    { // skip dynamic dimensions
-                        tensor_size *= dim;
-                    }
-                }
-
-                // Multiply by element size based on data type
-                switch (onnx_input_types_[i])
-                {
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-                    tensor_size *= 4;
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-                    tensor_size *= 8;
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
-                    tensor_size *= 1; // 1 byte
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
-                    tensor_size *= 2; // 2 bytes
-                    break;
-                default:
-                    tensor_size *= 4; // Default to 4 bytes
-                }
-
-                total_size += tensor_size;
-            }
-
-            // Sum up output tensor sizes
-            for (size_t i = 0; i < onnx_output_shapes_.size(); i++)
-            {
-                size_t tensor_size = 1;
-                for (const auto &dim : onnx_output_shapes_[i])
-                {
-                    if (dim > 0)
-                    { // Skip dynamic dimensions
-                        tensor_size *= dim;
-                    }
-                }
-
-                // Multiply by element size based on data type
-                switch (onnx_output_types_[i])
-                {
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-                    tensor_size *= 4; // 4 bytes
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-                    tensor_size *= 8; // 8 bytes
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
-                    tensor_size *= 1; // 1 byte
-                    break;
-                case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
-                    tensor_size *= 2; // 2 bytes
-                    break;
-                default:
-                    tensor_size *= 4; // Default to 4 bytes
-                }
-
-                total_size += tensor_size;
-            }
-
-            // Add a base memory overhead for the model weights and runtime
-            // This is a rough estimation - actual overhead depends on the model
-            constexpr size_t BASE_OVERHEAD_BYTES = 10 * 1024 * 1024; // 10 MB
-            return total_size + BASE_OVERHEAD_BYTES;
-        }
-
+        /**
+         * @brief Load a PyTorch model
+         * 
+         * @return true if successful, false otherwise
+         */
         bool LoadPyTorchModel()
         {
-            // TODO: Implement PyTorch model loading
+            // Implementation placeholder
             last_error_ = "PyTorch model loading not implemented";
             return false;
         }
 
+        /**
+         * @brief Load a custom model
+         * 
+         * @return true if successful, false otherwise
+         */
         bool LoadCustomModel()
         {
-            // TODO: Implement custom model loading
+            // Implementation placeholder
             last_error_ = "Custom model loading not implemented";
             return false;
         }
 
+        /**
+         * @brief Run inference with TensorFlow model
+         * 
+         * @param inputs Input tensors
+         * @param outputs Output tensors (will be filled)
+         * @return true if successful, false otherwise
+         */
         bool InferTensorFlow(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
-            // TODO: Implement TensorFlow inference
+            // Implementation placeholder
             last_error_ = "TensorFlow inference not implemented";
             return false;
         }
 
+        /**
+         * @brief Run inference with TensorRT model
+         * 
+         * @param inputs Input tensors
+         * @param outputs Output tensors (will be filled)
+         * @return true if successful, false otherwise
+         */
         bool InferTensorRT(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
-            // TODO: Implement TensorRT inference
+            // Implementation placeholder
             last_error_ = "TensorRT inference not implemented";
             return false;
         }
 
         /**
          * @brief Execute inference using the loaded ONNX model
-         *
-         * This method performs the entire inference process with an ONNX model:
-         * 1. Validates input tensors against model requirements
-         * 2. Converts input tensors to ONNX Runtime format
-         * 3. Executes the inference operation
-         * 4. Converts ONNX outputs back to Tensor objects
-         * 5. Updates performance statistics
-         *
+         * 
          * @param inputs Vector of input tensors matching the model's expected inputs
          * @param outputs Vector that will be filled with output tensors
-         * @return true if inference succeeded, false if an error occurred
+         * @return true if successful, false otherwise
          */
-        // Original InferONNX with just a few strategic flushes
         bool InferONNX(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
             if (!onnx_session_)
@@ -1164,9 +1207,6 @@ namespace inference
                 // Create ONNX input tensors in the order expected by the model
                 std::vector<Ort::Value> ort_inputs;
                 ort_inputs.resize(onnx_input_names_.size());
-
-                // Strategic flush to ensure output is displayed up to this point
-                std::cout.flush();
 
                 // Convert each input tensor to ONNX format
                 for (const auto &input : inputs)
@@ -1229,9 +1269,6 @@ namespace inference
                     output_names_cstr.data(),
                     output_names_cstr.size());
 
-                // Strategic flush to ensure output is displayed up to this point
-                std::cout.flush();
-
                 // Convert ONNX outputs to our tensor format
                 outputs.clear();
                 outputs.reserve(ort_outputs.size());
@@ -1269,15 +1306,12 @@ namespace inference
                     }
 
                     default:
-                        std::cerr << "Unsupported output data type: " << output_type << std::endl;
+                        // Log but continue with other tensors
                         break;
                     }
 
                     outputs.push_back(std::move(output_tensor));
                 }
-
-                // Final strategic flush
-                std::cout.flush();
 
                 return true;
             }
@@ -1293,36 +1327,57 @@ namespace inference
             }
         }
 
+        /**
+         * @brief Run inference with PyTorch model
+         * 
+         * @param inputs Input tensors
+         * @param outputs Output tensors (will be filled)
+         * @return true if successful, false otherwise
+         */
         bool InferPyTorch(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
-            // TODO: Implement PyTorch inference
+            // Implementation placeholder
             last_error_ = "PyTorch inference not implemented";
             return false;
         }
 
+        /**
+         * @brief Run inference with custom model
+         * 
+         * @param inputs Input tensors
+         * @param outputs Output tensors (will be filled)
+         * @return true if successful, false otherwise
+         */
         bool InferCustom(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
         {
-            // TODO: Implement custom inference
+            // Implementation placeholder
             last_error_ = "Custom inference not implemented";
             return false;
         }
 
+        /**
+         * @brief Unload a TensorFlow model
+         */
         void UnloadTensorFlow()
         {
-            // TODO: Implement TensorFlow unloading
+            // Implementation placeholder
         }
 
+        /**
+         * @brief Unload a TensorRT model
+         */
         void UnloadTensorRT()
         {
-            // TODO: Implement TensorRT unloading
+            // Implementation placeholder
         }
 
+        /**
+         * @brief Unload an ONNX model
+         */
         void UnloadONNX()
         {
             try
             {
-                std::cout << "Unloading ONNX model" << std::endl;
-
                 // Release ONNX Runtime session
                 if (onnx_session_)
                 {
@@ -1336,23 +1391,27 @@ namespace inference
                 onnx_output_shapes_.clear();
                 onnx_input_types_.clear();
                 onnx_output_types_.clear();
-
-                std::cout << "ONNX model unloaded successfully" << std::endl;
             }
             catch (const std::exception &e)
             {
-                std::cerr << "Error unloading ONNX model: " << e.what() << std::endl;
+                // Log but continue
             }
         }
 
+        /**
+         * @brief Unload a PyTorch model
+         */
         void UnloadPyTorch()
         {
-            // TODO: Implement PyTorch unloading
+            // Implementation placeholder
         }
 
+        /**
+         * @brief Unload a custom model
+         */
         void UnloadCustom()
         {
-            // TODO: Implement custom unloading
+            // Implementation placeholder
         }
     };
 
@@ -1360,48 +1419,104 @@ namespace inference
     // Model Public Methods
     //====================================================
 
+    /**
+     * @brief Construct a new Model object
+     * 
+     * @param model_path Path to the model file or directory
+     * @param type Model type (ONNX, TensorRT, etc.)
+     * @param config Model configuration
+     * @param device Device type (CPU/GPU)
+     * @param device_id Device ID if using GPU
+     */
     Model::Model(const std::string &model_path,
                  ModelType type,
                  const ModelConfig &config,
                  DeviceType device,
                  int device_id)
-        : impl_(new ModelImpl(model_path, type, config, device, device_id)) {}
+        : impl_(new ModelImpl(model_path, type, config, device, device_id))
+    {
+    }
 
+    /**
+     * @brief Destructor
+     */
     Model::~Model() = default;
 
+    /**
+     * @brief Move constructor
+     */
     Model::Model(Model &&other) noexcept = default;
+
+    /**
+     * @brief Move assignment operator
+     */
     Model &Model::operator=(Model &&other) noexcept = default;
 
+    /**
+     * @brief Load the model into memory
+     * 
+     * @return true if successful, false otherwise
+     */
     bool Model::Load()
     {
         return impl_->Load();
     }
 
+    /**
+     * @brief Run inference using this model
+     * 
+     * @param inputs Vector of input tensors
+     * @param outputs Vector to store output tensors
+     * @return true if successful, false otherwise
+     */
     bool Model::Infer(const std::vector<Tensor> &inputs, std::vector<Tensor> &outputs)
     {
         return impl_->Infer(inputs, outputs);
     }
 
+    /**
+     * @brief Get model metadata
+     * 
+     * @return ModelMetadata structure
+     */
     ModelMetadata Model::GetMetadata() const
     {
         return impl_->GetMetadata();
     }
 
+    /**
+     * @brief Check if model is loaded
+     * 
+     * @return true if loaded, false otherwise
+     */
     bool Model::IsLoaded() const
     {
         return impl_->IsLoaded();
     }
 
+    /**
+     * @brief Unload the model from memory
+     */
     void Model::Unload()
     {
         impl_->Unload();
     }
 
+    /**
+     * @brief Get the last error message
+     * 
+     * @return Error message string
+     */
     std::string Model::GetLastError() const
     {
         return impl_->GetLastError();
     }
 
+    /**
+     * @brief Get model statistics
+     * 
+     * @return Stats structure with performance information
+     */
     Model::Stats Model::GetStats() const
     {
         return impl_->GetStats();

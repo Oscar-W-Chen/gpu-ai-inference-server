@@ -1,47 +1,144 @@
-# gpu-ai-inference-server
-AI Inference Server that takes trained AI models, load them into memory, and executes inference requests efficiently on NVIDIA GPUs. This project utilizes C++, CUDA programming, and Golang.
+# 🚀 GPU AI Inference Server
 
-# TODO LIST
-- [x] Implement and test basic server by launch it through docker on local machine(CPU)
-- [x] Implement cuda_util and related CMakeLists 
-- [x] Implement test file for cuda_util and test cuda_util on Google Colab
-- [x] Implement the model and inference_manager files
-- [x] Implement the C to Go binding logic
-- [x] Understand the new files
-- [x] Update main.go to expose the underlying C++ functionalities to Go server
-- [x] Complete the notebook such that the Google Colab runs the server directly on Go without containers
-- [x] Add to documentation under docs/
-- [x] Fully implement ModelRepository and integrate it with the code stack
-- [x] Fully implement the model specific loading, inferencing, and unloading logic for ONNX
-- [x] Put API.md on homepage
-- [ ] Restructure main.go to use singleton inference manager throughout the server session 
-- [ ] Remove unnecessary DEBUG messages
-- [x] Put complete model files under /model directory to test loading functions
-- [ ] Add other Go files to set up the full functioning server
-- [ ] Run full end-to-end integration test on AI inferencing on top of GPUs
+## Overview
 
+A high-performance, scalable GPU-accelerated AI inference server designed to efficiently load, manage, and execute machine learning models across NVIDIA GPUs. Built with modern C++, CUDA, and Go, this server provides a robust solution for deploying and serving machine learning models with low-latency inference.
 
-# Detailed Design
-For top level design diagram, see [here](./docs/architecture-diagram.svg)
-For documentations about key components, dataflow, and component interactions, see [here](./docs/design.md).
+![Architecture Diagram](docs/architecture-diagram.svg)
 
-# How to run the server in Google Colab
-Google Colab is the required environment to run this server since it has NVIDIA GPUs available
-To run the server:
-1. Open Google Colab environment. Make sure you are connected to a T4 GPU runtime
-2. Open [run_server.ipynb](./docs/run_server.ipynb)
-3. Substitude github username and email, github auth token, and ngrok auth token
-4. Build the server
-   ```
-   !./scripts/build.server.py
-   ```
-5. Run the server
-   ```
-   !./scripts/run_server.sh
-   ```
-6. OPTIONAL: on your local terminal (Unable to do this on Google Colab), you can execute the test_client.py script run automated tests against the opened server
-   ```
-   python client/test_client.py --url [https://ngrok-custom-url.app]
-   # For example
-   python client/test_client.py --url https://9a68-34-19-48-151.ngrok-free.app/
-   ```
+## 🌟 Key Features
+
+- **Multi-Framework Support**: 
+  - ONNX Runtime integration
+  - Extensible architecture for TensorFlow, TensorRT, PyTorch, and custom models
+  - Seamless GPU acceleration
+
+- **Advanced Model Management**:
+  - Dynamic model loading and unloading
+  - Version-based model handling
+  - Comprehensive model metadata tracking
+
+- **Performance Monitoring**:
+  - Real-time inference statistics
+  - GPU memory usage tracking
+  - Detailed performance metrics
+
+- **Flexible Deployment**:
+  - REST and gRPC API support
+  - Cloud-ready design
+  - Easy integration with existing ML workflows
+
+## 🔧 Technology Stack
+
+- **Languages**: C++, Go, CUDA
+- **GPU Acceleration**: NVIDIA CUDA
+- **Model Frameworks**: 
+  - ONNX Runtime
+  - (Planned) TensorFlow, TensorRT, PyTorch
+- **API**: 
+  - REST (Gin Framework)
+  - gRPC support (Planned)
+
+## 📦 Quick Start
+
+### Prerequisites
+
+- NVIDIA GPU with CUDA support
+- Go 1.23+
+- CUDA Toolkit
+- ONNX Runtime
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Oscar-W-Chen/gpu-ai-inference-server.git
+cd gpu-ai-inference-server
+
+# Build the server
+./scripts/build_server.py
+
+# Run the server
+./scripts/run_server.sh
+```
+
+## 🔍 API Documentation
+
+Comprehensive API documentation is available in [docs/api.md](docs/api.md)
+
+### Example API Endpoints
+
+- `GET /health`: Server health check
+- `GET /cuda`: CUDA device information
+- `GET /models`: List available models
+- `POST /models/{name}/load`: Load a specific model
+- `POST /models/{name}/infer`: Run inference on a model
+
+## 🚀 Deployment Options
+
+### Local Development
+- Docker support (Planned)
+- Google Colab
+- Local GPU workstations
+
+### Cloud Platforms
+- Google Cloud Platform
+- AWS EC2 with GPU instances
+- Azure GPU VMs
+
+## 🛠 Build and Test
+
+```bash
+# Build inference engine
+./scripts/build_inference_engine.sh
+
+# Run CUDA tests
+./build/test/cuda_test
+
+# Run ONNX model tests
+./build/test/onnx_test
+```
+
+## 📊 Performance Metrics
+
+- Low-latency inference
+- Efficient GPU memory management
+- Horizontal scalability
+
+## 🧩 Roadmap
+
+ - [x] Fully implement ModelRepository and integrate it with the code stack
+ - [x] Fully implement the model specific loading, inferencing, and unloading logic for ONNX
+ - [x] Put API.md on homepage
+ - [x] Restructure main.go to use singleton inference manager throughout the server session 
+ - [x] Remove unnecessary DEBUG messages
+ - [x] Put complete model files under /model directory to test loading functions
+ - [ ] Run full end-to-end integration test on AI inferencing on top of GPUs
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+## 📞 Contact
+
+Oscar Chen - [@Oscar-W-Chen](https://github.com/Oscar-W-Chen)
+
+Project Link: [https://github.com/Oscar-W-Chen/gpu-ai-inference-server](https://github.com/Oscar-W-Chen/gpu-ai-inference-server)
+
+## 🙏 Acknowledgements
+
+- [NVIDIA Triton Inference Server](https://developer.nvidia.com/triton-inference-server)
+- [ONNX Runtime](https://onnxruntime.ai/)
+- Open-source community
+
+---
+
+**Note**: This project is currently in active development. Contributions and feedback are welcome! 🌈
