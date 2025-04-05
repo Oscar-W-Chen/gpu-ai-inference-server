@@ -8,7 +8,6 @@ This document describes the REST API endpoints provided by the GPU AI Inference 
 ```
 GET /health
 ```
-
 Returns the health status of the server.
 
 **Response**:
@@ -23,7 +22,6 @@ Returns the health status of the server.
 ```
 GET /cuda
 ```
-
 Returns information about CUDA availability and device count.
 
 **Response**:
@@ -40,8 +38,7 @@ Returns information about CUDA availability and device count.
 ```
 GET /devices
 ```
-
-Returns information about all GPU devices.
+Returns information about all available GPU devices.
 
 **Response**:
 ```json
@@ -56,8 +53,7 @@ Returns information about all GPU devices.
 ```
 GET /gpu/memory
 ```
-
-Returns memory information for all GPU devices.
+Returns detailed memory usage for GPU devices.
 
 **Response**:
 ```json
@@ -76,11 +72,10 @@ Returns memory information for all GPU devices.
 
 ## Model Management
 
-### List Models
+### List Available Models
 ```
 GET /models
 ```
-
 Returns a list of all models available in the repository.
 
 **Response**:
@@ -90,14 +85,14 @@ Returns a list of all models available in the repository.
   "model_count": 2,
   "models": [
     {
-      "name": "simple_model",
+      "name": "test_model",
       "is_loaded": false,
       "state": "AVAILABLE"
     },
     {
-      "name": "test_model",
+      "name": "densenet_onnx",
       "is_loaded": true,
-      "state": "AVAILABLE"
+      "state": "LOADED"
     }
   ]
 }
@@ -107,12 +102,11 @@ Returns a list of all models available in the repository.
 ```
 GET /models/{name}
 ```
-
 Returns detailed status information for a specific model.
 
 **Parameters**:
 - `name`: Model name (path parameter)
-- `version`: Model version (query parameter, optional)
+- `version`: Model version (optional query parameter)
 
 **Response**:
 ```json
@@ -122,9 +116,25 @@ Returns detailed status information for a specific model.
   "is_loaded": true,
   "state": "LOADED",
   "repository_path": "./models/test_model",
-  "inference_count": 42,
-  "memory_usage_mb": 256,
-  "last_inference_time_ms": 5.3
+  "available_versions": ["1"],
+  "config": {
+    "name": "test_model",
+    "version": "1",
+    "inputs": [
+      {
+        "name": "input",
+        "shape": [1, 3],
+        "data_type": "FLOAT32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "shape": [1, 2],
+        "data_type": "FLOAT32"
+      }
+    ]
+  }
 }
 ```
 
@@ -132,12 +142,11 @@ Returns detailed status information for a specific model.
 ```
 POST /models/{name}/load
 ```
-
-Loads a model into memory.
+Loads a specific model into memory.
 
 **Parameters**:
 - `name`: Model name (path parameter)
-- `version`: Model version (query parameter, optional)
+- `version`: Model version (optional query parameter)
 
 **Response**:
 ```json
@@ -152,12 +161,11 @@ Loads a model into memory.
 ```
 POST /models/{name}/unload
 ```
-
-Unloads a model from memory.
+Unloads a specific model from memory.
 
 **Parameters**:
 - `name`: Model name (path parameter)
-- `version`: Model version (query parameter, optional)
+- `version`: Model version (optional query parameter)
 
 **Response**:
 ```json
@@ -168,18 +176,63 @@ Unloads a model from memory.
 }
 ```
 
-## Error Responses
+### Run Inference
+```
+POST /models/{name}/infer
+```
+Run inference on a loaded model.
+
+**Parameters**:
+- `name`: Model name (path parameter)
+- `version`: Model version (optional query parameter)
+
+**Request Body**:
+```json
+{
+  "inputs": {
+    "input": [1.0, 2.0, 3.0]
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "model_name": "test_model",
+  "model_version": "1",
+  "outputs": [
+    {
+      "name": "output",
+      "data_type": "FLOAT32",
+      "shape": [1, 2],
+      "data": [4.5, 5.5]
+    }
+  ]
+}
+```
+
+## Error Handling
 
 All endpoints may return error responses with appropriate HTTP status codes:
 
-- `400 Bad Request` - Invalid request parameters
-- `404 Not Found` - Model or resource not found
-- `500 Internal Server Error` - Server error
+- `400 Bad Request`: Invalid request parameters
+- `404 Not Found`: Model or resource not found
+- `500 Internal Server Error`: Server-side error
 
-Error responses include a JSON object with an error message:
-
+**Error Response Format**:
 ```json
 {
-  "error": "Model not found in repository"
+  "error": "Detailed error message"
 }
 ```
+
+## Notes
+
+- Model names are case-sensitive
+- If no version is specified, the latest version of the model will be used
+- Ensure models are loaded before running inference
+- Supported model types: ONNX (currently), with planned support for TensorFlow, TensorRT, and PyTorch
+
+## Authentication
+
+Currently, this API does not require authentication. Future versions may implement security features.

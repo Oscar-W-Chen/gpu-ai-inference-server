@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <cstring>        // For memcpy
+#include <cuda_runtime.h> // For CUDA functions
 
 namespace inference
 {
